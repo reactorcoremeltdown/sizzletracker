@@ -30,8 +30,8 @@ deps: ## print platform install hints
 	@echo "Debian/Ubuntu: make deps-debian"
 
 deps-mac:
-	brew install portmidi ncurses
+	brew install portmidi
 
 deps-debian:
 	sudo apt-get update && sudo apt-get install -y \
-		build-essential libportmidi-dev libncurses-dev pkg-config
+		build-essential libportmidi-dev pkg-config

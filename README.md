@@ -63,8 +63,9 @@ ncurses, with live pattern editing for MIDI "looping".
 
 ## Build
 
-Requires Go (cgo enabled) and the native **portmidi** and **ncurses**
-libraries. Supported and CI-verified targets: **macOS Apple Silicon**,
+Requires Go ≥ 1.24 and the native **portmidi** library (the TUI is built
+on [tcell](https://github.com/gdamore/tcell), pure Go, so ncurses is no
+longer needed). Supported and CI-verified targets: **macOS Apple Silicon**,
 **macOS Intel**, **Linux amd64**, **Linux arm64**.
 
 Plain `go build` works on all of them with no environment variables — the
@@ -75,20 +76,19 @@ system default search path).
 **macOS** (Apple Silicon or Intel):
 
 ```sh
-brew install portmidi ncurses
+brew install portmidi
 make build && make run        # or just: go build -o sizzletracker .
 ```
 
 **Debian / Ubuntu** (amd64 or arm64):
 
 ```sh
-sudo apt-get install -y build-essential libportmidi-dev libncurses-dev pkg-config
+sudo apt-get install -y build-essential libportmidi-dev pkg-config
 make build && make run        # or just: go build -o sizzletracker .
 ```
 
-ncurses itself needs no special flags: goncurses links the system ncurses
-on macOS and uses `pkg-config` on Linux. If your libraries live somewhere
-non-standard, export `CGO_CFLAGS` / `CGO_LDFLAGS` and they are merged in.
+If your portmidi lives somewhere non-standard, export `CGO_CFLAGS` /
+`CGO_LDFLAGS` and they are merged in.
 
 If portmidi can't be initialised the app still runs (the output selector
 shows `<no portmidi>`); everything works except sound.
@@ -166,9 +166,9 @@ Arrangement focus (toolbar buttons: **Add Remove Cut Copy Paste**):
 | `internal/portmidi/` | Vendored PortMidi cgo binding with platform-aware build flags. |
 | `player.go` | Timing goroutine; each tick it *collects* note events under lock and emits MIDI after releasing the lock, so playback timing is unaffected by rendering or input. |
 | `editor.go` | UI/interaction state and the clickable-region hit-test system. |
-| `ui.go` | ncurses rendering; copies a per-frame snapshot of the song under a brief lock, then draws from the copy. |
-| `input.go` | Keyboard + mouse handling and punch-in. |
-| `main.go` | Wiring and the fixed-cadence (~30 fps) event loop. |
+| `ui.go` | tcell rendering; copies a per-frame snapshot of the song under a brief lock, then draws from the copy. UTF-8 / wide-char aware. |
+| `input.go` | tcell `EventKey` / `EventMouse` handling and punch-in. |
+| `main.go` | Wiring and the event-driven loop with a ~30 fps redraw ticker. |
 
 Concurrency / smoothness: the player runs in its own goroutine and, on each
 tick, reads the song under `Song.mu` only long enough to gather the events to

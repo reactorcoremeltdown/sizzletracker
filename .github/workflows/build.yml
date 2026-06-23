@@ -33,13 +33,13 @@ jobs:
 
       - name: Install native deps (macOS)
         if: runner.os == 'macOS'
-        run: brew install portmidi ncurses
+        run: brew install portmidi
 
       - name: Install native deps (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libportmidi-dev libncurses-dev pkg-config
+          sudo apt-get install -y build-essential libportmidi-dev pkg-config
 
       - name: Build
         run: CGO_ENABLED=1 go build -o sizzletracker .

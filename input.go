@@ -4,116 +4,102 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
-	gc "github.com/rthornton128/goncurses"
+	"github.com/gdamore/tcell/v2"
 )
 
-// keyboard semitone maps (classic tracker layout).
-var lowerRow = map[gc.Key]int{
+// Keyboard-to-semitone maps for tracker note entry (classic tracker layout).
+var lowerRow = map[rune]int{
 	'z': 0, 's': 1, 'x': 2, 'd': 3, 'c': 4, 'v': 5,
 	'g': 6, 'b': 7, 'h': 8, 'n': 9, 'j': 10, 'm': 11,
 }
-var upperRow = map[gc.Key]int{
+var upperRow = map[rune]int{
 	'q': 12, '2': 13, 'w': 14, '3': 15, 'e': 16, 'r': 17,
 	'5': 18, 't': 19, '6': 20, 'y': 21, '7': 22, 'u': 23, 'i': 24,
 }
 
-// handleKey dispatches a key press based on the current focus.
-func (a *App) handleKey(ch gc.Key) bool {
-	// When the help overlay is up, any key dismisses it.
+// handleKey dispatches a key event based on the current focus.
+func (a *App) handleKey(ev *tcell.EventKey) bool {
+	// Help overlay: any key dismisses it.
 	if a.ed.showHelp {
 		a.ed.showHelp = false
 		return true
 	}
 
-	// Global keys first (work in any focus except text-field entry).
+	k := ev.Key()
+	r := ev.Rune()
+	mod := ev.Modifiers()
+
+	// Global keys first (suspended during text-field entry).
 	if a.ed.focus != FocusBPM && a.ed.focus != FocusLen {
-		switch ch {
-		case gc.KEY_F10:
-			return false // quit
-		case gc.KEY_F1:
+		switch k {
+		case tcell.KeyF10:
+			return false
+		case tcell.KeyCtrlC:
+			return false
+		case tcell.KeyF1:
 			a.ed.showHelp = true
 			return true
-		case ' ':
-			a.player.playFrom(a.ed.arrCursor)
-			return true
-		case gc.KEY_TAB:
+		case tcell.KeyTab:
 			if a.ed.focus == FocusTracker {
 				a.ed.focus = FocusArrange
 			} else {
 				a.ed.focus = FocusTracker
 			}
 			return true
-		case gc.KEY_F2:
+		case tcell.KeyF2:
 			a.ed.focus = FocusTracker
 			return true
-		case gc.KEY_F3:
+		case tcell.KeyF3:
 			a.ed.focus = FocusArrange
 			return true
-		case gc.KEY_F5:
+		case tcell.KeyF5:
 			a.toggleArm()
 			return true
-		case gc.KEY_F6:
+		case tcell.KeyF6:
 			a.toggleLoop()
 			return true
-		case gc.KEY_F7:
+		case tcell.KeyF7:
 			a.ed.follow = !a.ed.follow
 			a.ed.status = fmt.Sprintf("Follow playhead: %v", a.ed.follow)
 			return true
-		case gc.KEY_F8:
+		case tcell.KeyF8:
 			a.midi.allNotesOff()
 			a.player.allOff()
 			a.ed.status = "PANIC: all notes off"
 			return true
-		case gc.KEY_F9:
+		case tcell.KeyF9:
 			a.ed.focus = FocusBPM
 			a.song.mu.Lock()
 			a.ed.bpmBuf = strconv.FormatFloat(a.song.BPM, 'f', -1, 64)
 			a.song.mu.Unlock()
 			return true
 		}
+		if k == tcell.KeyRune && r == ' ' {
+			a.player.playFrom(a.ed.arrCursor)
+			return true
+		}
 	}
 
 	switch a.ed.focus {
 	case FocusBPM:
-		a.handleBPMKey(ch)
+		a.handleBPMKey(k, r)
 	case FocusLen:
-		a.handleLenKey(ch)
+		a.handleLenKey(k, r)
 	case FocusTracker:
-		a.handleTrackerKey(ch)
+		a.handleTrackerKey(k, r, mod)
 	case FocusArrange:
-		a.handleArrangeKey(ch)
+		a.handleArrangeKey(k, r, mod)
 	}
 	return true
 }
 
-// handleLenKey edits the block-length text field.
-func (a *App) handleLenKey(ch gc.Key) {
-	switch ch {
-	case gc.KEY_ENTER, gc.KEY_RETURN, 13:
-		if v, err := strconv.Atoi(strings.TrimSpace(a.ed.lenBuf)); err == nil && v >= 1 {
-			a.blockSetLength(v)
-			a.ed.status = fmt.Sprintf("Block length set to %d", v)
-		} else {
-			a.ed.status = "Invalid length"
-		}
-		a.ed.focus = FocusTracker
-	case gc.KEY_ESC:
-		a.ed.focus = FocusTracker
-	case gc.KEY_BACKSPACE, 127, 8:
-		if len(a.ed.lenBuf) > 0 {
-			a.ed.lenBuf = a.ed.lenBuf[:len(a.ed.lenBuf)-1]
-		}
-	default:
-		if ch >= '0' && ch <= '9' && len(a.ed.lenBuf) < 4 {
-			a.ed.lenBuf += string(rune(ch))
-		}
-	}
-}
+// --- text fields ---
 
-func (a *App) handleBPMKey(ch gc.Key) {
-	switch ch {
-	case gc.KEY_ENTER, gc.KEY_RETURN, 13:
+func (a *App) handleBPMKey(k tcell.Key, r rune) {
+	switch k {
+	case tcell.KeyEnter:
 		if v, err := strconv.ParseFloat(a.ed.bpmBuf, 64); err == nil && v >= 20 && v <= 400 {
 			a.song.mu.Lock()
 			a.song.BPM = v
@@ -123,93 +109,137 @@ func (a *App) handleBPMKey(ch gc.Key) {
 			a.ed.status = "Invalid BPM (20-400)"
 		}
 		a.ed.focus = FocusTracker
-	case gc.KEY_ESC:
+	case tcell.KeyEsc:
 		a.ed.focus = FocusTracker
-	case gc.KEY_BACKSPACE, 127, 8:
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		if len(a.ed.bpmBuf) > 0 {
 			a.ed.bpmBuf = a.ed.bpmBuf[:len(a.ed.bpmBuf)-1]
 		}
-	default:
-		if (ch >= '0' && ch <= '9') || ch == '.' {
+	case tcell.KeyRune:
+		if (r >= '0' && r <= '9') || r == '.' {
 			if len(a.ed.bpmBuf) < 6 {
-				a.ed.bpmBuf += string(rune(ch))
+				a.ed.bpmBuf += string(r)
 			}
 		}
 	}
 }
 
-func (a *App) handleTrackerKey(ch gc.Key) {
+func (a *App) handleLenKey(k tcell.Key, r rune) {
+	switch k {
+	case tcell.KeyEnter:
+		if v, err := strconv.Atoi(strings.TrimSpace(a.ed.lenBuf)); err == nil && v >= 1 {
+			a.blockSetLength(v)
+			a.ed.status = fmt.Sprintf("Block length set to %d", v)
+		} else {
+			a.ed.status = "Invalid length"
+		}
+		a.ed.focus = FocusTracker
+	case tcell.KeyEsc:
+		a.ed.focus = FocusTracker
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if len(a.ed.lenBuf) > 0 {
+			a.ed.lenBuf = a.ed.lenBuf[:len(a.ed.lenBuf)-1]
+		}
+	case tcell.KeyRune:
+		if r >= '0' && r <= '9' && len(a.ed.lenBuf) < 4 {
+			a.ed.lenBuf += string(r)
+		}
+	}
+}
+
+// --- tracker ---
+
+func (a *App) handleTrackerKey(k tcell.Key, r rune, mod tcell.ModMask) {
 	a.song.mu.Lock()
 	blk := a.song.Blocks[a.ed.editBlock]
 	tpb := a.song.TicksPerBeat
-	tpbar := a.song.ticksPerBar()
 	a.song.mu.Unlock()
 
-	switch ch {
-	case gc.KEY_UP:
+	shift := mod&tcell.ModShift != 0
+
+	switch k {
+	case tcell.KeyUp:
 		a.ed.curTick = wrap(a.ed.curTick-1, blk.Length)
-	case gc.KEY_DOWN:
+		return
+	case tcell.KeyDown:
 		a.ed.curTick = wrap(a.ed.curTick+1, blk.Length)
-	case gc.KEY_PAGEUP:
+		return
+	case tcell.KeyPgUp:
 		a.ed.curTick = clampInt(a.ed.curTick-tpb, 0, blk.Length-1)
-	case gc.KEY_PAGEDOWN:
+		return
+	case tcell.KeyPgDn:
 		a.ed.curTick = clampInt(a.ed.curTick+tpb, 0, blk.Length-1)
-	case gc.KEY_HOME:
+		return
+	case tcell.KeyHome:
 		a.ed.curTick = 0
-	case gc.KEY_END:
+		return
+	case tcell.KeyEnd:
 		a.ed.curTick = blk.Length - 1
-	case gc.KEY_LEFT:
-		a.ed.curCol--
-		if a.ed.curCol < 0 {
-			a.ed.curCol = numCols - 1
+		return
+	case tcell.KeyLeft:
+		if shift {
 			a.ed.curTrack = wrap(a.ed.curTrack-1, len(blk.Tracks))
+		} else {
+			a.ed.curCol--
+			if a.ed.curCol < 0 {
+				a.ed.curCol = numCols - 1
+				a.ed.curTrack = wrap(a.ed.curTrack-1, len(blk.Tracks))
+			}
 		}
-	case gc.KEY_RIGHT:
-		a.ed.curCol++
-		if a.ed.curCol >= numCols {
-			a.ed.curCol = 0
+		return
+	case tcell.KeyRight:
+		if shift {
 			a.ed.curTrack = wrap(a.ed.curTrack+1, len(blk.Tracks))
+		} else {
+			a.ed.curCol++
+			if a.ed.curCol >= numCols {
+				a.ed.curCol = 0
+				a.ed.curTrack = wrap(a.ed.curTrack+1, len(blk.Tracks))
+			}
 		}
-	case gc.KEY_SLEFT:
-		a.ed.curTrack = wrap(a.ed.curTrack-1, len(blk.Tracks))
-	case gc.KEY_SRIGHT:
-		a.ed.curTrack = wrap(a.ed.curTrack+1, len(blk.Tracks))
+		return
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		a.setCell(func(st *Step) { *st = emptyStep() })
+		a.ed.curTick = wrap(a.ed.curTick-1, blk.Length)
+		return
+	case tcell.KeyDelete:
+		a.setCell(func(st *Step) { *st = emptyStep() })
+		return
+	}
+
+	if k != tcell.KeyRune {
+		return
+	}
+
+	switch r {
 	case '[':
-		a.ed.editBlock = wrap(a.ed.editBlock-1, len(a.song.Blocks))
-		a.player.setEditBlock(a.ed.editBlock)
-		a.resetCursorToBlock()
+		a.gotoBlock(-1)
 	case ']':
-		a.ed.editBlock = wrap(a.ed.editBlock+1, len(a.song.Blocks))
-		a.player.setEditBlock(a.ed.editBlock)
-		a.resetCursorToBlock()
+		a.gotoBlock(1)
 	case '-', '_':
 		a.ed.octave = clampInt(a.ed.octave-1, 0, 8)
 	case '=', '+':
 		a.ed.octave = clampInt(a.ed.octave+1, 0, 8)
-	case '.', gc.KEY_DC:
+	case '.':
 		a.setCell(func(st *Step) { *st = emptyStep() })
-	case gc.KEY_BACKSPACE, 127, 8:
-		a.setCell(func(st *Step) { *st = emptyStep() })
-		a.ed.curTick = wrap(a.ed.curTick-1, blk.Length)
 	case '`':
 		a.setCell(func(st *Step) { st.Note = NoteOff })
 		a.advance()
 	default:
-		a.handleTrackerEdit(ch, tpbar)
+		a.handleTrackerEdit(r)
 	}
 }
 
-// handleTrackerEdit deals with column-specific value entry.
-func (a *App) handleTrackerEdit(ch gc.Key, tpbar int) {
+func (a *App) handleTrackerEdit(r rune) {
 	switch a.ed.curCol {
 	case ColNote:
-		if semi, ok := lowerRow[ch]; ok {
+		if semi, ok := lowerRow[r]; ok {
 			a.enterNote((a.ed.octave+1)*12 + semi)
-		} else if semi, ok := upperRow[ch]; ok {
+		} else if semi, ok := upperRow[r]; ok {
 			a.enterNote((a.ed.octave+1)*12 + semi)
 		}
 	case ColVel:
-		if d, ok := hexDigit(ch); ok {
+		if d, ok := hexDigit(r); ok {
 			a.setCell(func(st *Step) {
 				old := st.Vel
 				if old == ValEmpty {
@@ -223,8 +253,8 @@ func (a *App) handleTrackerEdit(ch gc.Key, tpbar int) {
 			})
 		}
 	case ColChan:
-		if ch >= '0' && ch <= '9' {
-			d := int(ch - '0')
+		if r >= '0' && r <= '9' {
+			d := int(r - '0')
 			a.setCell(func(st *Step) {
 				disp := 0
 				if st.Chan != ValEmpty {
@@ -254,7 +284,6 @@ func (a *App) enterNote(note int) {
 	a.advance()
 }
 
-// setCell mutates the step under the tracker cursor.
 func (a *App) setCell(f func(*Step)) {
 	a.song.mu.Lock()
 	defer a.song.mu.Unlock()
@@ -279,32 +308,46 @@ func (a *App) resetCursorToBlock() {
 	a.song.mu.Unlock()
 }
 
-func (a *App) handleArrangeKey(ch gc.Key) {
+// --- arrangement ---
+
+func (a *App) handleArrangeKey(k tcell.Key, r rune, mod tcell.ModMask) {
 	a.song.mu.Lock()
 	n := len(a.song.Arrangement)
 	nb := len(a.song.Blocks)
 	a.song.mu.Unlock()
 
-	switch ch {
-	case gc.KEY_LEFT:
-		a.ed.arrCursor = clampInt(a.ed.arrCursor-1, 0, max(0, n-1))
-		a.ed.selActive = false
-	case gc.KEY_RIGHT:
-		a.ed.arrCursor = clampInt(a.ed.arrCursor+1, 0, max(0, n-1))
-		a.ed.selActive = false
-	case gc.KEY_SLEFT:
-		a.extendSel(-1, n)
-	case gc.KEY_SRIGHT:
-		a.extendSel(1, n)
-	case gc.KEY_HOME:
+	shift := mod&tcell.ModShift != 0
+
+	switch k {
+	case tcell.KeyLeft:
+		if shift {
+			a.extendSel(-1, n)
+		} else {
+			a.ed.arrCursor = clampInt(a.ed.arrCursor-1, 0, max(0, n-1))
+			a.ed.selActive = false
+		}
+		return
+	case tcell.KeyRight:
+		if shift {
+			a.extendSel(1, n)
+		} else {
+			a.ed.arrCursor = clampInt(a.ed.arrCursor+1, 0, max(0, n-1))
+			a.ed.selActive = false
+		}
+		return
+	case tcell.KeyHome:
 		a.ed.arrCursor = 0
-	case gc.KEY_END:
+		return
+	case tcell.KeyEnd:
 		a.ed.arrCursor = max(0, n-1)
-	case gc.KEY_UP: // cycle the block referenced at the cursor slot
+		return
+	case tcell.KeyUp:
 		a.cycleSlot(1, nb)
-	case gc.KEY_DOWN:
+		return
+	case tcell.KeyDown:
 		a.cycleSlot(-1, nb)
-	case gc.KEY_ENTER, gc.KEY_RETURN, 13:
+		return
+	case tcell.KeyEnter:
 		a.song.mu.Lock()
 		if a.ed.arrCursor < len(a.song.Arrangement) {
 			a.ed.editBlock = a.song.Arrangement[a.ed.arrCursor]
@@ -313,7 +356,23 @@ func (a *App) handleArrangeKey(ch gc.Key) {
 		a.player.setEditBlock(a.ed.editBlock)
 		a.ed.focus = FocusTracker
 		a.resetCursorToBlock()
-	case 'i', gc.KEY_IC:
+		return
+	case tcell.KeyInsert:
+		a.song.mu.Lock()
+		a.song.arrInsert(a.ed.arrCursor, a.ed.editBlock)
+		a.song.mu.Unlock()
+		a.ed.status = "Inserted block into arrangement"
+		return
+	case tcell.KeyDelete:
+		a.arrRemoveSel()
+		return
+	}
+
+	if k != tcell.KeyRune {
+		return
+	}
+	switch r {
+	case 'i':
 		a.song.mu.Lock()
 		a.song.arrInsert(a.ed.arrCursor, a.ed.editBlock)
 		a.song.mu.Unlock()
@@ -324,14 +383,8 @@ func (a *App) handleArrangeKey(ch gc.Key) {
 		a.ed.arrCursor = len(a.song.Arrangement) - 1
 		a.song.mu.Unlock()
 		a.ed.status = "Appended block to arrangement"
-	case 'x', gc.KEY_DC:
-		lo, hi := a.ed.selRange()
-		a.song.mu.Lock()
-		a.song.arrDelete(lo, hi)
-		a.song.mu.Unlock()
-		a.ed.arrCursor = clampInt(lo, 0, max(0, len(a.song.Arrangement)-1))
-		a.ed.selActive = false
-		a.ed.status = "Deleted arrangement slot(s)"
+	case 'x':
+		a.arrRemoveSel()
 	case 'c':
 		a.copyArr()
 	case 'v':
@@ -422,7 +475,7 @@ func (a *App) moveSel(delta int) {
 	a.ed.status = "Moved selection"
 }
 
-// --- shared transport helpers (used by keys and mouse) ---
+// --- shared transport helpers ---
 
 func (a *App) toggleArm() {
 	a.ed.armed = !a.ed.armed
@@ -444,26 +497,48 @@ func (a *App) toggleLoop() {
 }
 
 // --- mouse ---
+//
+// tcell delivers raw button-state snapshots, so we detect clicks as the
+// transition from "no buttons" to "some buttons" and synthesize double-clicks
+// from press timing + position.
 
-func (a *App) handleMouse() {
-	me := gc.GetMouse()
-	if me == nil {
-		return
-	}
-	left := me.State&gc.M_B1_CLICKED != 0 || me.State&gc.M_B1_PRESSED != 0
-	dbl := me.State&gc.M_B1_DBL_CLICKED != 0
-	right := me.State&gc.M_B3_CLICKED != 0 || me.State&gc.M_B3_PRESSED != 0
-	shift := me.State&gc.M_SHIFT != 0
+func (a *App) handleMouse(ev *tcell.EventMouse) {
+	cur := ev.Buttons()
+	x, y := ev.Position()
+	mod := ev.Modifiers()
+	pressed := cur & ^a.prevBtn
+	a.prevBtn = cur
 
-	if !left && !right && !dbl {
-		return
+	if pressed == 0 {
+		return // motion or release; nothing to do
 	}
-	// A click anywhere dismisses the help overlay.
+
+	// Help overlay: a click anywhere closes it.
 	if a.ed.showHelp {
 		a.ed.showHelp = false
 		return
 	}
-	reg, ok := a.ed.hitTest(me.X, me.Y)
+
+	left := pressed&tcell.ButtonPrimary != 0
+	right := pressed&tcell.ButtonSecondary != 0
+	shift := mod&tcell.ModShift != 0
+
+	// Detect double-click on the primary button.
+	dbl := false
+	if left {
+		now := time.Now()
+		if now.Sub(a.lastClickAt) < dblClickWindow &&
+			a.lastClickBtn == tcell.ButtonPrimary &&
+			a.lastClickX == x && a.lastClickY == y {
+			dbl = true
+		}
+		a.lastClickAt = now
+		a.lastClickX = x
+		a.lastClickY = y
+		a.lastClickBtn = tcell.ButtonPrimary
+	}
+
+	reg, ok := a.ed.hitTest(x, y)
 	if !ok {
 		return
 	}
@@ -558,7 +633,6 @@ func (a *App) handleMouse() {
 		}
 	case ActBlockPick:
 		if right {
-			// right-click a palette block inserts it at the arrange cursor
 			a.song.mu.Lock()
 			a.song.arrInsert(a.ed.arrCursor, reg.data1)
 			a.song.mu.Unlock()
@@ -640,7 +714,7 @@ func (a *App) gotoBlock(delta int) {
 	a.resetCursorToBlock()
 }
 
-// --- arrangement block operations (toolbar + keys) ---
+// --- arrangement toolbar operations ---
 
 func (a *App) arrAddCurrent() {
 	a.song.mu.Lock()
@@ -671,14 +745,12 @@ func (a *App) arrCut() {
 	a.ed.status = "Cut arrangement slot(s)"
 }
 
-// --- punch-in from MIDI input (called on the UI goroutine via channel) ---
+// --- live punch-in ---
 //
-// While armed and playing, note-on writes a note at the playhead on the cursor
-// track and the held note is remembered; the matching note-off writes a
-// NOTE-OFF event at the playhead (on the same track), so the recorded note
-// sustains for exactly as long as the key was held. While armed and stopped it
-// behaves as a step recorder: note-on writes a note and advances; note-off is
-// ignored (there is no running clock to time it against).
+// While armed and playing, note-on writes a note at the playhead on the
+// cursor track and the matching note-off writes a NOTE-OFF event on the same
+// track. While armed and stopped it behaves as a step recorder.
+
 func (a *App) applyPunch(on bool, note, vel int) {
 	if !a.ed.armed {
 		return
@@ -704,7 +776,6 @@ func (a *App) applyPunch(on bool, note, vel int) {
 		}
 		a.ed.punch[note] = punchInfo{track: tr, tick: tick}
 	} else {
-		// Resolve the track this note was written to.
 		info, known := a.ed.punch[note]
 		offTrack := tr
 		if known {
@@ -713,8 +784,6 @@ func (a *App) applyPunch(on bool, note, vel int) {
 		}
 		if playing && offTrack >= 0 && offTrack < len(blk.Tracks) {
 			offTick := tick
-			// If the key was released within the same tick it started on,
-			// place the note-off on the following tick so the note survives.
 			if known && offTick == info.tick {
 				offTick = info.tick + 1
 			}
@@ -746,14 +815,14 @@ func wrap(v, n int) int {
 	return v
 }
 
-func hexDigit(ch gc.Key) (int, bool) {
+func hexDigit(r rune) (int, bool) {
 	switch {
-	case ch >= '0' && ch <= '9':
-		return int(ch - '0'), true
-	case ch >= 'a' && ch <= 'f':
-		return int(ch-'a') + 10, true
-	case ch >= 'A' && ch <= 'F':
-		return int(ch-'A') + 10, true
+	case r >= '0' && r <= '9':
+		return int(r - '0'), true
+	case r >= 'a' && r <= 'f':
+		return int(r-'a') + 10, true
+	case r >= 'A' && r <= 'F':
+		return int(r-'A') + 10, true
 	}
 	return 0, false
 }

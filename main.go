@@ -6,6 +6,9 @@
 //
 // Lower half: an arrangement view that sequences blocks into a song — a larger
 // step sequencer where each slot references a block (a set of tracks).
+//
+// Rendering and input use tcell (pure Go, UTF-8 / wide-char aware). The only
+// remaining native dependency is PortMidi (vendored under internal/portmidi).
 package main
 
 import (
@@ -13,7 +16,7 @@ import (
 	"os"
 	"time"
 
-	gc "github.com/rthornton128/goncurses"
+	"github.com/gdamore/tcell/v2"
 )
 
 // inEvent carries a MIDI note event from the input goroutine to the UI.
@@ -25,14 +28,32 @@ type inEvent struct {
 
 // App wires together the document, the MIDI engine, the player and the editor.
 type App struct {
-	win    *gc.Window
+	screen tcell.Screen
 	song   *Song
 	midi   *MidiEngine
 	player *Player
 	ed     *Editor
 
 	midiIn chan inEvent
+	events chan tcell.Event
+
+	// Mouse press / double-click tracking. tcell delivers raw button-state
+	// events, so we detect transitions and time-based double-clicks here.
+	prevBtn      tcell.ButtonMask
+	lastClickAt  time.Time
+	lastClickX   int
+	lastClickY   int
+	lastClickBtn tcell.ButtonMask
 }
+
+// dblClickWindow is how close in time two clicks at the same cell must be to
+// count as a double-click.
+const dblClickWindow = 400 * time.Millisecond
+
+// frameInterval bounds the UI redraw cadence. The event loop redraws on every
+// event and on each tick of this interval, so the playhead keeps moving on
+// screen even when the user isn't pressing anything.
+const frameInterval = 33 * time.Millisecond
 
 func main() {
 	if err := run(); err != nil {
@@ -42,21 +63,20 @@ func main() {
 }
 
 func run() error {
-	stdscr, err := gc.Init()
+	screen, err := tcell.NewScreen()
 	if err != nil {
-		return fmt.Errorf("ncurses init: %w", err)
+		return fmt.Errorf("tcell new screen: %w", err)
 	}
-	defer gc.End()
+	if err := screen.Init(); err != nil {
+		return fmt.Errorf("tcell init: %w", err)
+	}
+	defer screen.Fini()
 
-	gc.Echo(false)
-	gc.CBreak(true)
-	gc.Cursor(0)
-	stdscr.Keypad(true)
-	stdscr.Timeout(0) // non-blocking input; the loop paces its own frames
-	gc.MouseMask(gc.M_ALL, nil)
-	if gc.HasColors() {
-		initColors()
-	}
+	initStyles()
+	screen.SetStyle(styNormal)
+	screen.EnableMouse(tcell.MouseButtonEvents)
+	screen.HideCursor()
+	screen.Clear()
 
 	song := newSong()
 	mid := newMidiEngine()
@@ -64,17 +84,18 @@ func run() error {
 	ed := newEditor()
 
 	app := &App{
-		win:    stdscr,
+		screen: screen,
 		song:   song,
 		midi:   mid,
 		player: player,
 		ed:     ed,
 		midiIn: make(chan inEvent, 128),
+		events: make(chan tcell.Event, 128),
 	}
 	player.setEditBlock(ed.editBlock)
 
-	// Route incoming MIDI notes to the UI goroutine (non-blocking) so the
-	// editor state is only ever touched from one goroutine.
+	// Route incoming MIDI notes to the UI goroutine over a channel so the
+	// editor state is only ever touched from one place.
 	mid.setInputCallback(func(on bool, note, vel int) {
 		select {
 		case app.midiIn <- inEvent{on, note, vel}:
@@ -85,54 +106,73 @@ func run() error {
 	defer player.stop()
 	defer mid.close()
 
+	// tcell event pump.
+	quitPump := make(chan struct{})
+	go func() {
+		for {
+			ev := screen.PollEvent()
+			if ev == nil {
+				return
+			}
+			select {
+			case app.events <- ev:
+			case <-quitPump:
+				return
+			}
+		}
+	}()
+	defer close(quitPump)
+
 	app.loop()
 	return nil
 }
 
-// frameInterval is the UI redraw cadence (~30 fps). Rendering runs on this
-// fixed schedule independent of how fast the user types, so a flood of input
-// can never stall the display — and because draw() only holds the song lock
-// for a brief snapshot copy, it never disturbs the playback goroutine either.
-const frameInterval = 33 * time.Millisecond
-
+// loop is the main event/render loop. tcell events drive UI updates, the
+// frame ticker guarantees a redraw cadence (so the playhead animates even
+// when the user is idle), and any pending MIDI input is drained per iteration.
 func (a *App) loop() {
-	for {
-		start := time.Now()
+	ticker := time.NewTicker(frameInterval)
+	defer ticker.Stop()
 
-		// Drain pending input without blocking. Bounded per frame so a key
-		// auto-repeat flood can't starve rendering; leftovers wait one frame.
-		for i := 0; i < 128; i++ {
-			ch := a.win.GetChar()
-			if ch == 0 {
-				break
+	for {
+		select {
+		case ev := <-a.events:
+			if !a.processEvent(ev) {
+				return
 			}
-			switch {
-			case ch == gc.KEY_MOUSE:
-				a.handleMouse()
-			case ch == gc.KEY_RESIZE:
-				// next draw() re-reads MaxYX
-			default:
-				if !a.handleKey(ch) {
-					return
-				}
-			}
+		case <-ticker.C:
+		case mev := <-a.midiIn:
+			a.applyPunch(mev.on, mev.note, mev.vel)
 		}
 
-		// Drain punched-in MIDI notes.
-		for {
+		// Drain anything else that's queued so a key-repeat flood collapses
+		// into a single frame. Bounded so we never block on draw.
+		drain := true
+		for i := 0; drain && i < 64; i++ {
 			select {
-			case ev := <-a.midiIn:
-				a.applyPunch(ev.on, ev.note, ev.vel)
-				continue
+			case ev := <-a.events:
+				if !a.processEvent(ev) {
+					return
+				}
+			case mev := <-a.midiIn:
+				a.applyPunch(mev.on, mev.note, mev.vel)
 			default:
+				drain = false
 			}
-			break
 		}
 
 		a.draw()
-
-		if d := frameInterval - time.Since(start); d > 0 {
-			time.Sleep(d)
-		}
 	}
+}
+
+func (a *App) processEvent(ev tcell.Event) bool {
+	switch ev := ev.(type) {
+	case *tcell.EventKey:
+		return a.handleKey(ev)
+	case *tcell.EventMouse:
+		a.handleMouse(ev)
+	case *tcell.EventResize:
+		a.screen.Sync()
+	}
+	return true
 }
