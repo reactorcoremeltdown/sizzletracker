@@ -120,12 +120,6 @@ func rollString(row []bool) string {
 	return string(b)
 }
 
-func setRollFromString(row []bool, s string) {
-	for i := 0; i < len(s) && i < len(row); i++ {
-		row[i] = s[i] == '#'
-	}
-}
-
 // --- encode / decode ------------------------------------------------------
 
 func encodeProject(s *Song) string {
@@ -194,7 +188,11 @@ func decodeProject(r io.Reader) (*Song, error) {
 			curBlock, curIdx, curTrack = b, len(s.Blocks)-1, nil
 		case "roll":
 			if curIdx >= 0 && len(f) >= 2 {
-				setRollFromString(s.Roll[curIdx], f[1])
+				for i, c := range f[1] {
+					if c == '#' {
+						s.rollSet(curIdx, i, true) // grows the lane as needed
+					}
+				}
 			}
 		case "track":
 			if curBlock == nil || len(f) < 2 {

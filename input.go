@@ -536,7 +536,7 @@ func (a *App) rollMove(dr, db int, shift bool) {
 		a.resetCursorToBlock()
 	}
 	if db != 0 {
-		a.ed.rollBeat = clampInt(a.ed.rollBeat+db, 0, rollBeats-1)
+		a.ed.rollBeat = clampInt(a.ed.rollBeat+db, 0, maxRollBeats-1)
 	}
 }
 

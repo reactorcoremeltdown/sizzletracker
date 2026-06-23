@@ -16,8 +16,14 @@ const (
 	ValEmpty = -1
 )
 
-// rollBeats is the width of the piano-roll timeline, in beats.
+// rollBeats is the initial width of a piano-roll lane, in beats (16 bars at
+// 4 beats/bar). Lanes grow on demand as markers are placed further out, up to
+// maxRollBeats.
 const rollBeats = 64
+
+// maxRollBeats caps the piano-roll timeline (1024 beats = 256 bars), bounding
+// memory while being effectively unlimited for a song.
+const maxRollBeats = 1024
 
 // Step is a single cell for one track at one tick. A tracker row.
 type Step struct {
@@ -151,7 +157,7 @@ type Song struct {
 	BPM    float64
 	Sig    TimeSig
 	Blocks []*Block
-	Roll   [][]bool // Roll[i] is the beat lane for Blocks[i]; len == rollBeats
+	Roll   [][]bool // Roll[i] is the beat lane for Blocks[i]; grows on demand
 }
 
 func newRollRow() []bool { return make([]bool, rollBeats) }
@@ -299,9 +305,19 @@ func (s *Song) rollGet(row, beat int) bool {
 }
 
 func (s *Song) rollSet(row, beat int, v bool) {
-	if row >= 0 && row < len(s.Roll) && beat >= 0 && beat < len(s.Roll[row]) {
-		s.Roll[row][beat] = v
+	if row < 0 || row >= len(s.Roll) || beat < 0 || beat >= maxRollBeats {
+		return
 	}
+	// Grow the lane on demand when marking a beat past its current end.
+	if beat >= len(s.Roll[row]) {
+		if !v {
+			return
+		}
+		grown := make([]bool, beat+1)
+		copy(grown, s.Roll[row])
+		s.Roll[row] = grown
+	}
+	s.Roll[row][beat] = v
 }
 
 // rollPaint marks a whole block-length run of beats starting at start.

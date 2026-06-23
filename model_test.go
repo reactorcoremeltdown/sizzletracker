@@ -146,6 +146,31 @@ func TestKeyboardNoteChannel(t *testing.T) {
 	}
 }
 
+// TestRollGrowsBeyondInitial checks markers can be placed past the initial
+// 16-bar (64-beat) lane width, growing the lane on demand.
+func TestRollGrowsBeyondInitial(t *testing.T) {
+	s := newSong()
+	if len(s.Roll[0]) != rollBeats {
+		t.Fatalf("initial lane width = %d, want %d", len(s.Roll[0]), rollBeats)
+	}
+	beat := 100 // bar 26 — well past the old 16-bar limit
+	s.rollSet(0, beat, true)
+	if !s.rollGet(0, beat) {
+		t.Errorf("marker at beat %d not set after growth", beat)
+	}
+	if len(s.Roll[0]) < beat+1 {
+		t.Errorf("lane did not grow: len=%d", len(s.Roll[0]))
+	}
+	if got := s.totalBeats(); got != beat+1 {
+		t.Errorf("totalBeats = %d, want %d", got, beat+1)
+	}
+	// Beyond the hard cap is rejected without growing unbounded.
+	s.rollSet(0, maxRollBeats+50, true)
+	if len(s.Roll[0]) > maxRollBeats {
+		t.Errorf("lane grew past cap: len=%d", len(s.Roll[0]))
+	}
+}
+
 // TestRollPaintErase checks placing a block paints its bar-length of beats and
 // that individual beats can be erased.
 func TestRollPaintErase(t *testing.T) {

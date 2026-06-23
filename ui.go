@@ -513,7 +513,7 @@ func (a *App) drawPianoRoll(top, height, w int, fr *frame) {
 		laneRows = 1
 	}
 
-	a.ed.rollBeat = clampInt(a.ed.rollBeat, 0, rollBeats-1)
+	a.ed.rollBeat = clampInt(a.ed.rollBeat, 0, maxRollBeats-1)
 
 	// Vertical scroll (blocks) and horizontal scroll (beats).
 	if a.ed.editBlock < a.ed.rollRowScroll {
@@ -529,7 +529,7 @@ func (a *App) drawPianoRoll(top, height, w int, fr *frame) {
 	if a.ed.rollBeat >= a.ed.rollBeatScroll+visBeats {
 		a.ed.rollBeatScroll = a.ed.rollBeat - visBeats + 1
 	}
-	a.ed.rollBeatScroll = clampInt(a.ed.rollBeatScroll, 0, max(0, rollBeats-visBeats))
+	a.ed.rollBeatScroll = clampInt(a.ed.rollBeatScroll, 0, max(0, maxRollBeats-visBeats))
 
 	a.drawRollRuler(top+1, gridX, visBeats, fr)
 
@@ -554,7 +554,7 @@ func (a *App) drawPianoRoll(top, height, w int, fr *frame) {
 		rowOdd := row%2 == 1
 		for c := 0; c < visBeats; c++ {
 			beat := a.ed.rollBeatScroll + c
-			if beat >= rollBeats {
+			if beat >= maxRollBeats {
 				break
 			}
 			x := gridX + c

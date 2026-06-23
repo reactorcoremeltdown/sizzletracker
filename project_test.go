@@ -87,3 +87,16 @@ func TestExportMIDIHeader(t *testing.T) {
 		t.Errorf("division = %d, want %d", div, midiPPQ)
 	}
 }
+
+func TestRollBeyond16BarsRoundTrip(t *testing.T) {
+	s := newSong()
+	s.rollSet(1, 200, true) // bar 51 on block B
+	text := encodeProject(s)
+	got, err := decodeProject(strings.NewReader(text))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.rollGet(1, 200) {
+		t.Errorf("marker at beat 200 did not survive round-trip")
+	}
+}
