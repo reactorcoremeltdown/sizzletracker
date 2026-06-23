@@ -5,7 +5,13 @@ import (
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 )
+
+// cellWidth returns the visual width of s in terminal cells. We use this for
+// layout — region hit-boxes, x advances — anywhere we cannot trust `len()`
+// (which is byte length, wrong for the multibyte glyphs we render).
+func cellWidth(s string) int { return runewidth.StringWidth(s) }
 
 // --- Styles --------------------------------------------------------------
 //
@@ -72,14 +78,16 @@ const (
 	minTrackerH     = 5
 )
 
-// Simple ASCII transport glyphs (single-cell, byte length == display width).
+// Transport glyphs. All are single-cell in monospaced terminal fonts; tcell
+// renders them correctly (uniseg-aware), and cellWidth() handles their
+// multibyte length so the layout still lines up.
 const (
-	glyphPlay  = "|>"
-	glyphStop  = "[]"
-	glyphRec   = "()"
-	glyphLoop  = "<>"
-	glyphLoop1 = "@@"
-	glyphPanic = "!!"
+	glyphPlay  = "▶"
+	glyphStop  = "■"
+	glyphRec   = "●"
+	glyphLoop  = "⟲" // loop-song  (anticlockwise = "round trip the arrangement")
+	glyphLoop1 = "⟳" // loop-block (clockwise gapped = "tight repeat")
+	glyphPanic = "⚠"
 )
 
 // --- per-frame snapshot --------------------------------------------------
@@ -236,8 +244,9 @@ func (a *App) styledButton(y, x int, label string, off, onSty tcell.Style, on bo
 		st = onSty
 	}
 	a.put(y, x, txt, st)
-	a.ed.addRegion(Region{x: x, y: y, w: len(txt), h: 1, action: act})
-	return x + len(txt) + 1
+	w := cellWidth(txt)
+	a.ed.addRegion(Region{x: x, y: y, w: w, h: 1, action: act})
+	return x + w + 1
 }
 
 func (a *App) drawTopBar(y, w int, fr *frame) {
@@ -267,19 +276,13 @@ func (a *App) drawTopBar(y, w int, fr *frame) {
 	if a.ed.focus == FocusBPM {
 		bpmSty = styBtnOn
 	}
-	a.put(y, x, lbl, bpmSty)
-	a.ed.addRegion(Region{x: x, y: y, w: len(lbl), h: 1, action: ActBPM})
-	x += len(lbl) + 1
+	x = a.putRegion(y, x, lbl, bpmSty, ActBPM)
 
 	sigTxt := " Sig:" + fr.sig.String() + " "
-	a.put(y, x, sigTxt, styBtn)
-	a.ed.addRegion(Region{x: x, y: y, w: len(sigTxt), h: 1, action: ActTimeSig})
-	x += len(sigTxt) + 1
+	x = a.putRegion(y, x, sigTxt, styBtn, ActTimeSig)
 
 	out := " Out:" + trunc(a.midi.OutName(), 16) + " "
-	a.put(y, x, out, styBtn)
-	a.ed.addRegion(Region{x: x, y: y, w: len(out), h: 1, action: ActMidiOut})
-	x += len(out) + 1
+	x = a.putRegion(y, x, out, styBtn, ActMidiOut)
 
 	inName := a.midi.InName()
 	inSty := styBtn
@@ -287,8 +290,16 @@ func (a *App) drawTopBar(y, w int, fr *frame) {
 		inSty = styBtnOn
 	}
 	in := " In:" + trunc(inName, 14) + " "
-	a.put(y, x, in, inSty)
-	a.ed.addRegion(Region{x: x, y: y, w: len(in), h: 1, action: ActMidiIn})
+	a.putRegion(y, x, in, inSty, ActMidiIn)
+}
+
+// putRegion draws s and registers a hit-region of the correct cell width.
+// Returns the next x position (x + cellWidth(s) + 1 spacer).
+func (a *App) putRegion(y, x int, s string, st tcell.Style, act RegionAction) int {
+	a.put(y, x, s, st)
+	w := cellWidth(s)
+	a.ed.addRegion(Region{x: x, y: y, w: w, h: 1, action: act})
+	return x + w + 1
 }
 
 // --- Tracker (upper) -----------------------------------------------------
@@ -432,7 +443,7 @@ func (a *App) drawTrackerControls(y, w int, fr *frame) {
 	x := 0
 	title := fmt.Sprintf("BLK %s [%d/%d]", fr.edit.name, a.ed.editBlock+1, fr.numBlocks)
 	a.put(y, x, title, styAccent)
-	x += len(title) + 1
+	x += cellWidth(title) + 1
 
 	x = a.button(y, x, "<", false, ActBlockPrev)
 	x = a.button(y, x, ">", false, ActBlockNext)
@@ -448,14 +459,12 @@ func (a *App) drawTrackerControls(y, w int, fr *frame) {
 		lenSty = styBtnOn
 	}
 	field := " " + lenTxt + " "
-	a.put(y, x, field, lenSty)
-	a.ed.addRegion(Region{x: x, y: y, w: len(field), h: 1, action: ActLenField})
-	x += len(field) + 1
+	x = a.putRegion(y, x, field, lenSty, ActLenField)
 	x = a.button(y, x, "+", false, ActLenDouble)
 
 	info := fmt.Sprintf(" oct%d step%d", a.ed.octave, a.ed.step)
 	a.put(y, x, info, styDim)
-	x += len(info) + 2
+	x += cellWidth(info) + 2
 
 	right := w - 16
 	if x < right {
@@ -489,18 +498,20 @@ func (a *App) drawArrange(top, height, w int, fr *frame) {
 		if i == a.ed.editBlock {
 			sty = styBtnOn
 		}
-		if px+len(lbl) > w-22 {
+		lw := cellWidth(lbl)
+		if px+lw > w-22 {
 			a.put(labelY, px, ">", styDim)
 			break
 		}
 		a.put(labelY, px, lbl, sty)
-		a.ed.addRegion(Region{x: px, y: labelY, w: len(lbl), h: 1, action: ActBlockPick, data1: i})
-		px += len(lbl) + 1
+		a.ed.addRegion(Region{x: px, y: labelY, w: lw, h: 1, action: ActBlockPick, data1: i})
+		px += lw + 1
 	}
 
 	pos := fmt.Sprintf("arr %d/%d  row %d", fr.arrPos+1, len(fr.arrange), fr.playTick)
-	if px < w-len(pos)-1 {
-		a.put(labelY, w-len(pos)-1, pos, styDim)
+	pw := cellWidth(pos)
+	if px < w-pw-1 {
+		a.put(labelY, w-pw-1, pos, styDim)
 	}
 
 	a.ed.arrCursor = clampInt(a.ed.arrCursor, 0, max(0, len(fr.arrange)-1))
@@ -559,8 +570,9 @@ func (a *App) drawArrangeToolbar(y, w int, fr *frame) {
 	cur := formatClock(float64(fr.elapsedTicks) * fr.spt)
 	total := formatClock(float64(fr.songTicks) * fr.spt)
 	clk := fmt.Sprintf(" time %s / %s ", cur, total)
-	if x < w-len(clk)-1 {
-		a.put(y, w-len(clk)-1, clk, styHeader.Bold(true))
+	cw := cellWidth(clk)
+	if x < w-cw-1 {
+		a.put(y, w-cw-1, clk, styHeader.Bold(true))
 	}
 }
 
@@ -638,7 +650,7 @@ func (a *App) drawHelp(h, w int) {
 	a.screen.SetContent(x0+bw-1, y0+bh-1, '╯', nil, styHeader.Bold(true))
 
 	title := " sizzletracker — keys (F1) "
-	a.put(y0, x0+(bw-len(title))/2, title, styHeader.Bold(true))
+	a.put(y0, x0+(bw-cellWidth(title))/2, title, styHeader.Bold(true))
 
 	for i, line := range helpLines {
 		ry := y0 + 1 + i
@@ -664,20 +676,20 @@ func formatClock(sec float64) string {
 	return fmt.Sprintf("%d:%02d", total/60, total%60)
 }
 
-// trunc clips s to at most n DISPLAY cells. Since the strings we render are
-// ASCII / BMP, len() is a fine proxy for cell width here.
+// trunc clips s to at most n DISPLAY cells using grapheme-cluster boundaries,
+// so a multibyte rune is never sliced mid-sequence (MIDI port names from the
+// system can contain non-ASCII). The ellipsis is one cell.
 func trunc(s string, n int) string {
 	if n < 0 {
 		n = 0
 	}
-	if len(s) <= n {
+	if cellWidth(s) <= n {
 		return s
 	}
 	if n <= 1 {
-		return s[:n]
+		return runewidth.Truncate(s, n, "")
 	}
-	// Single-character ellipsis fits because tcell renders the rune as 1 cell.
-	return s[:n-1] + "…"
+	return runewidth.Truncate(s, n, "…")
 }
 
 func min(a, b int) int {
