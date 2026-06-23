@@ -9,7 +9,7 @@ import (
 )
 
 // cellWidth returns the visual width of s in terminal cells. We use this for
-// layout — region hit-boxes, x advances — anywhere we cannot trust `len()`
+// layout - region hit-boxes, x advances - anywhere we cannot trust `len()`
 // (which is byte length, wrong for the multibyte glyphs we render).
 func cellWidth(s string) int { return runewidth.StringWidth(s) }
 
@@ -52,7 +52,7 @@ func initStyles() {
 
 // put writes s at (y, x) with the given style. tcell's PutStrStyled walks
 // the string by grapheme clusters and handles wide / combining characters
-// correctly (Screen.Put is single-cluster — be sure to use the *Str* variant).
+// correctly (Screen.Put is single-cluster - be sure to use the *Str* variant).
 func (a *App) put(y, x int, s string, st tcell.Style) {
 	if y < 0 || x < 0 {
 		return
@@ -583,36 +583,37 @@ func (a *App) drawStatus(y, w int) {
 
 // --- Help overlay --------------------------------------------------------
 //
-// Now that we render via tcell (UTF-8 aware), the overlay uses real
-// box-drawing characters and an em-dash; tcell handles them correctly on
-// every terminal it supports.
+// The overlay is intentionally ASCII-only so it renders identically in every
+// terminal and font. tcell already prevents mojibake; this additionally avoids
+// ambiguous-width glyphs (bullets, middots, box-drawing) that some terminals
+// draw as double-width, which would misalign the panel.
 
 var helpLines = []string{
-	"§ Transport (top bar)",
-	"  |> play/stop   [] stop   () rec   <>/@@ loop   !! panic",
-	"  BPM · Sig · Out · In are clickable fields.",
+	"# Transport (top bar)",
+	"  ▶ play/stop   ■ stop   ● rec   ⟲/⟳ loop   ⚠ panic",
+	"  BPM   Sig   Out   In are clickable fields.",
 	"",
-	"§ Global",
+	"# Global",
 	"  Space play/stop   Tab switch pane   F1 help   F2/F3 focus",
 	"  F5 rec   F6 loop   F7 follow   F8 panic   F9 BPM   F10 quit",
 	"",
-	"§ Tracker (upper half)",
+	"# Tracker (upper half)",
 	"  Arrows move (L/R cross columns/tracks)",
-	"  Shift+L/R change track · PgUp/PgDn beat · Home/End ends",
+	"  Shift+L/R change track   PgUp/PgDn beat   Home/End ends",
 	"  [ / ] or < / > switch block",
-	"  len: − halves, + doubles, click number to type a length",
-	"  z…m / q…i notes · ` note-off · . or Del clear · Bksp back",
-	"  − / = octave · +trk / −trk add/delete track",
+	"  len: - halves, + doubles, click number to type a length",
+	"  z..m / q..i notes   ` note-off   . or Del clear   Bksp back",
+	"  - / = octave   +trk / -trk add/delete track",
 	"  Tall blocks scroll to keep the cursor / playhead in view.",
 	"",
-	"§ Arrangement (lower half) — fixed-height segment",
-	"  Toolbar: Add · Remove · Cut · Copy · Paste",
-	"  Left/Right move · Shift+L/R select · Up/Down cycle block",
-	"  Enter edit · i insert · a append · x delete · c copy · v paste",
-	"  , / . move selection · n new · d duplicate · D remove block",
+	"# Arrangement (lower half) - fixed-height segment",
+	"  Toolbar: Add   Remove   Cut   Copy   Paste",
+	"  Left/Right move   Shift+L/R select   Up/Down cycle block",
+	"  Enter edit   i insert   a append   x delete   c copy   v paste",
+	"  , / . move selection   n new   d duplicate   D remove block",
 	"  Song time / position shown in this pane.",
 	"",
-	"§ Live punch-in",
+	"# Live punch-in",
 	"  Pick 'In:', arm record (F5). While playing, controller",
 	"  note-on/off get recorded at the playhead on the cursor track.",
 	"",
@@ -635,22 +636,18 @@ func (a *App) drawHelp(h, w int) {
 	for r := 0; r < bh; r++ {
 		a.fill(y0+r, x0, bw, ' ', styHeader)
 	}
-	// Borders using box-drawing characters (tcell renders these correctly).
-	for i := 1; i < bw-1; i++ {
-		a.screen.SetContent(x0+i, y0, '─', nil, styHeader.Bold(true))
-		a.screen.SetContent(x0+i, y0+bh-1, '─', nil, styHeader.Bold(true))
-	}
+	// ASCII frame - renders identically on every terminal and font.
+	border := styHeader.Bold(true)
+	hbar := "+" + strings.Repeat("-", bw-2) + "+"
+	a.put(y0, x0, hbar, border)
+	a.put(y0+bh-1, x0, hbar, border)
 	for i := 1; i < bh-1; i++ {
-		a.screen.SetContent(x0, y0+i, '│', nil, styHeader.Bold(true))
-		a.screen.SetContent(x0+bw-1, y0+i, '│', nil, styHeader.Bold(true))
+		a.put(y0+i, x0, "|", border)
+		a.put(y0+i, x0+bw-1, "|", border)
 	}
-	a.screen.SetContent(x0, y0, '╭', nil, styHeader.Bold(true))
-	a.screen.SetContent(x0+bw-1, y0, '╮', nil, styHeader.Bold(true))
-	a.screen.SetContent(x0, y0+bh-1, '╰', nil, styHeader.Bold(true))
-	a.screen.SetContent(x0+bw-1, y0+bh-1, '╯', nil, styHeader.Bold(true))
 
-	title := " sizzletracker — keys (F1) "
-	a.put(y0, x0+(bw-cellWidth(title))/2, title, styHeader.Bold(true))
+	title := " sizzletracker - keys (F1) "
+	a.put(y0, x0+(bw-cellWidth(title))/2, title, border)
 
 	for i, line := range helpLines {
 		ry := y0 + 1 + i
@@ -658,8 +655,8 @@ func (a *App) drawHelp(h, w int) {
 			break
 		}
 		sty := styHeader
-		if strings.HasPrefix(line, "§ ") {
-			line = strings.Replace(line, "§", "•", 1)
+		if strings.HasPrefix(line, "# ") {
+			line = line[2:]
 			sty = styHeader.Bold(true)
 		}
 		a.put(ry, x0+2, line, sty)
@@ -689,7 +686,7 @@ func trunc(s string, n int) string {
 	if n <= 1 {
 		return runewidth.Truncate(s, n, "")
 	}
-	return runewidth.Truncate(s, n, "…")
+	return runewidth.Truncate(s, n, "..")
 }
 
 func min(a, b int) int {
