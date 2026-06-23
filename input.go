@@ -427,7 +427,7 @@ func (a *App) moveSel(delta int) {
 func (a *App) toggleArm() {
 	a.ed.armed = !a.ed.armed
 	if a.ed.armed {
-		a.ed.status = "Record ARMED — MIDI input punches in at cursor/playhead"
+		a.ed.status = "Record ARMED - MIDI input punches in at cursor/playhead"
 	} else {
 		a.ed.status = "Record off"
 	}

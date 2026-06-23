@@ -494,7 +494,7 @@ func (a *App) drawArrange(top, height, w int, fr *frame) {
 			pair = pBtnOn
 		}
 		if px+len(lbl) > w-22 {
-			a.put(labelY, px, "…", pDim, 0)
+			a.put(labelY, px, ">", pDim, 0)
 			break
 		}
 		a.put(labelY, px, lbl, pair, gc.A_BOLD)
@@ -583,32 +583,32 @@ func (a *App) drawStatus(y, w int) {
 
 var helpLines = []string{
 	"# Transport (top bar)",
-	"  |> play/stop   [] stop   () record-arm   <>/@@ loop   !! panic",
+	"  |> play/stop   [] stop   () rec   <>/@@ loop   !! panic",
 	"  BPM / Sig / Out / In are clickable fields.",
 	"",
 	"# Global",
 	"  Space play/stop   Tab switch pane   F1 help   F2/F3 focus",
-	"  F5 record   F6 loop mode   F7 follow   F8 panic   F9 BPM   F10 quit",
+	"  F5 rec   F6 loop   F7 follow   F8 panic   F9 BPM   F10 quit",
 	"",
 	"# Tracker (upper half)",
-	"  Arrows move (L/R cross columns/tracks)   Shift+L/R change track",
-	"  PgUp/PgDn jump a beat   Home/End top/bottom",
-	"  [ / ] previous/next block      </> buttons also switch block",
-	"  len  - halves, + doubles, click the number to type a length",
-	"  z..m / q..i notes    ` note-off    . /Del clear    Bksp clear+back",
-	"  - / = octave down/up    +trk / -trk add/delete track",
-	"  Large blocks scroll vertically to keep the cursor/playhead in view.",
+	"  Arrows move (L/R cross columns/tracks)",
+	"  Shift+L/R change track   PgUp/PgDn beat   Home/End ends",
+	"  [ / ] or < / > switch block",
+	"  len: - halves, + doubles, click number to type a length",
+	"  z..m / q..i notes   ` note-off   . or Del clear   Bksp back",
+	"  - / = octave    +trk / -trk add/delete track",
+	"  Tall blocks scroll to keep the cursor/playhead in view.",
 	"",
-	"# Arrangement (lower half) — fixed-height segment",
-	"  Toolbar: Add Remove Cut Copy Paste (also mouse-clickable)",
+	"# Arrangement (lower half) - fixed-height segment",
+	"  Toolbar: Add Remove Cut Copy Paste (mouse-clickable too)",
 	"  Left/Right move   Shift+L/R select   Up/Down cycle block",
-	"  Enter edit block   i insert  a append  x delete  c copy  v paste",
-	"  , / . move selection   n new  d duplicate  D remove block",
-	"  Song time / position shown on the toolbar and label rows.",
+	"  Enter edit   i insert  a append  x delete  c copy  v paste",
+	"  , / . move selection   n new  d dup  D remove block",
+	"  Song time / position shown in this pane.",
 	"",
 	"# Live punch-in",
-	"  Pick 'In:', arm record (F5). Playing: controller note-on/off are",
-	"  recorded as notes and note-offs at the playhead on the cursor track.",
+	"  Pick 'In:', arm record (F5). While playing, controller",
+	"  note-on/off get recorded at the playhead on the cursor track.",
 	"",
 	"  Press any key to close this help.",
 }
@@ -628,7 +628,7 @@ func (a *App) drawHelp(h, w int) {
 	for r := 0; r < bh; r++ {
 		a.put(y0+r, x0, strings.Repeat(" ", bw), pHeader, 0)
 	}
-	title := " sizzletracker — keys (F1) "
+	title := " sizzletracker - keys (F1) "
 	a.put(y0, x0, strings.Repeat("-", bw), pHeader, gc.A_BOLD)
 	a.put(y0, x0+(bw-len(title))/2, title, pHeader, gc.A_BOLD)
 
@@ -664,10 +664,10 @@ func trunc(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	if n <= 1 {
+	if n <= 3 {
 		return s[:n]
 	}
-	return s[:n-1] + "…"
+	return s[:n-3] + "..."
 }
 
 func min(a, b int) int {
