@@ -174,6 +174,15 @@ func newSong() *Song {
 	return s
 }
 
+// replaceWith adopts another song's contents in place (so existing *Song
+// references held by the player stay valid). Caller holds s.mu.
+func (s *Song) replaceWith(o *Song) {
+	s.BPM = o.BPM
+	s.Sig = o.Sig
+	s.Blocks = o.Blocks
+	s.Roll = o.Roll
+}
+
 func (s *Song) ticksPerBeat() int { return s.Sig.ticksPerBeat() }
 func (s *Song) ticksPerBar() int  { return s.Sig.ticksPerBar() }
 

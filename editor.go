@@ -8,6 +8,16 @@ const (
 	FocusArrange              // lower half: the piano roll
 	FocusBPM                  // editing the BPM text field in the top bar
 	FocusLen                  // editing the block-length text field
+	FocusDialog               // a modal text-input dialog (open/save/export)
+)
+
+// Dialog actions for the modal file dialog.
+type DialogAction int
+
+const (
+	DlgSave DialogAction = iota
+	DlgOpen
+	DlgExport
 )
 
 // Column indices within a track.
@@ -29,8 +39,10 @@ const (
 	ActLoopMode
 	ActPanic
 	ActBPM
-	ActTimeSig   // open the time-signature dropdown
-	ActSigOption // data1=index into timeSigs
+	ActTimeSig    // open the time-signature dropdown
+	ActSigOption  // data1=index into timeSigs
+	ActFileMenu   // open the File dropdown
+	ActFileOption // data1=index into fileMenu
 	ActMidiOut
 	ActMidiIn
 	ActTrackerCell // data1=track, data2=tick, data3=column
@@ -94,6 +106,17 @@ type Editor struct {
 	showHelp bool
 	showSig  bool
 	sigX     int // x of the Sig field (so the dropdown can align under it)
+	showFile bool
+	fileX    int // x of the File menu (for dropdown alignment)
+
+	// Modal file dialog.
+	showDialog bool
+	dlgAction  DialogAction
+	dlgPrompt  string
+	dlgBuf     string
+
+	// Current project file path (for plain "Save").
+	projPath string
 
 	// Text-field editing buffers.
 	bpmBuf string

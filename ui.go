@@ -220,8 +220,14 @@ func (a *App) draw() {
 	if a.ed.showSig {
 		a.drawSigDropdown(fr)
 	}
+	if a.ed.showFile {
+		a.drawFileDropdown()
+	}
 	if a.ed.showHelp {
 		a.drawHelp(h, w)
+	}
+	if a.ed.showDialog {
+		a.drawDialog(h, w)
 	}
 	a.screen.Show()
 }
@@ -262,6 +268,9 @@ func (a *App) drawTopBar(y, w int, fr *frame) {
 	x := 1
 	a.put(y, x, "SIZZLE", styHeader.Bold(true))
 	x += 7
+
+	a.ed.fileX = x
+	x = a.button(y, x, "File", a.ed.showFile, ActFileMenu)
 
 	x = a.button(y, x, glyphPlay, fr.playing, ActPlay)
 	x = a.button(y, x, glyphStop, false, ActStop)
@@ -631,6 +640,52 @@ func (a *App) drawSigDropdown(fr *frame) {
 	}
 }
 
+// fileMenu is the list of File-dropdown options (indices used by ActFileOption).
+var fileMenu = []string{"Save", "Save As...", "Open...", "Export MIDI..."}
+
+func (a *App) drawFileDropdown() {
+	x0 := a.ed.fileX
+	wmax := 0
+	for _, s := range fileMenu {
+		if cellWidth(s) > wmax {
+			wmax = cellWidth(s)
+		}
+	}
+	for i, opt := range fileMenu {
+		lbl := fmt.Sprintf(" %-*s ", wmax, opt)
+		y := 1 + i
+		a.put(y, x0, lbl, styBtn)
+		a.ed.addRegion(Region{x: x0, y: y, w: cellWidth(lbl), h: 1, action: ActFileOption, data1: i})
+	}
+}
+
+// drawDialog renders the modal file dialog: a prompt and a text input.
+func (a *App) drawDialog(h, w int) {
+	bw := 60
+	if bw > w-4 {
+		bw = w - 4
+	}
+	bh := 4
+	x0 := (w - bw) / 2
+	y0 := (h - bh) / 2
+
+	for r := 0; r < bh; r++ {
+		a.fill(y0+r, x0, bw, ' ', styHeader)
+	}
+	border := styHeader.Bold(true)
+	a.put(y0, x0, "+"+strings.Repeat("-", bw-2)+"+", border)
+	a.put(y0+bh-1, x0, "+"+strings.Repeat("-", bw-2)+"+", border)
+	for i := 1; i < bh-1; i++ {
+		a.put(y0+i, x0, "|", border)
+		a.put(y0+i, x0+bw-1, "|", border)
+	}
+	a.put(y0, x0+2, " "+a.ed.dlgPrompt+" ", border)
+
+	input := a.ed.dlgBuf + "_"
+	a.put(y0+1, x0+2, trunc(input, bw-4), styBtnOn)
+	a.put(y0+2, x0+2, trunc("Enter = confirm   Esc = cancel", bw-4), styHeader)
+}
+
 func (a *App) drawStatus(y, w int) {
 	a.fill(y, 0, w, ' ', styHeader)
 	a.put(y, 1, trunc(a.ed.status, w-2), styHeader)
@@ -646,11 +701,15 @@ func (a *App) drawStatus(y, w int) {
 var helpLines = []string{
 	"# Transport (top bar)",
 	"  ▶ play/stop   ■ stop   ● rec   ⟲/⟳ loop   ⚠ panic",
-	"  BPM   Sig   Out   In are clickable fields.",
+	"  File menu, BPM, Sig, Out, In are clickable fields.",
 	"",
 	"# Global",
 	"  Space play/stop   Tab switch pane   F1 help   F2/F3 focus",
 	"  F5 rec   F6 loop   F7 follow   F8 panic   F9 BPM   F10 quit",
+	"",
+	"# Files (File menu, or keys)",
+	"  Ctrl+S save   Ctrl+O open   Ctrl+E export MIDI",
+	"  Projects are plain-text .sng; type a path in the dialog, Enter.",
 	"",
 	"# Tracker (upper half)",
 	"  Arrows move (L/R cross columns/tracks)",
@@ -673,8 +732,6 @@ var helpLines = []string{
 	"  the playhead. Each held note takes its own track; chords overflow",
 	"  to free tracks and new tracks are created automatically.",
 	"  CC and Program Change from the input pass through to the output.",
-	"",
-	"  Press any key to close this help.",
 }
 
 func (a *App) drawHelp(h, w int) {
@@ -706,9 +763,12 @@ func (a *App) drawHelp(h, w int) {
 	title := " sizzletracker - keys (F1) "
 	a.put(y0, x0+(bw-cellWidth(title))/2, title, border)
 
+	// Reserve the bottom interior row for the close hint so it shows even if
+	// the content is taller than the terminal.
+	hintRow := y0 + bh - 2
 	for i, line := range helpLines {
 		ry := y0 + 1 + i
-		if ry >= y0+bh-1 {
+		if ry >= hintRow {
 			break
 		}
 		sty := styHeader
@@ -718,6 +778,7 @@ func (a *App) drawHelp(h, w int) {
 		}
 		a.put(ry, x0+2, line, sty)
 	}
+	a.put(hintRow, x0+2, "Press any key to close this help.", styHeader.Bold(true))
 }
 
 // --- helpers -------------------------------------------------------------

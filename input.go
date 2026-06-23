@@ -30,9 +30,16 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 	r := ev.Rune()
 	mod := ev.Modifiers()
 
-	// Time-signature dropdown: Esc closes it.
-	if a.ed.showSig && k == tcell.KeyEsc {
+	// Dropdowns: Esc closes them.
+	if k == tcell.KeyEsc && (a.ed.showSig || a.ed.showFile) {
 		a.ed.showSig = false
+		a.ed.showFile = false
+		return true
+	}
+
+	// Modal dialog captures all keys.
+	if a.ed.focus == FocusDialog {
+		a.handleDialogKey(k, r)
 		return true
 	}
 
@@ -79,6 +86,15 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 			a.song.mu.Lock()
 			a.ed.bpmBuf = strconv.FormatFloat(a.song.BPM, 'f', -1, 64)
 			a.song.mu.Unlock()
+			return true
+		case tcell.KeyCtrlS:
+			a.fileOption(0) // Save (opens Save As dialog if no path yet)
+			return true
+		case tcell.KeyCtrlO:
+			a.openDialog(DlgOpen, "Open project:", a.ed.projPath)
+			return true
+		case tcell.KeyCtrlE:
+			a.openDialog(DlgExport, "Export MIDI to:", a.defaultMidiName())
 			return true
 		}
 		if k == tcell.KeyRune && r == ' ' {
@@ -154,6 +170,132 @@ func (a *App) handleLenKey(k tcell.Key, r rune) {
 			a.ed.lenBuf += string(r)
 		}
 	}
+}
+
+// --- file dialog ---
+
+func (a *App) handleDialogKey(k tcell.Key, r rune) {
+	switch k {
+	case tcell.KeyEnter:
+		a.executeDialog()
+	case tcell.KeyEsc:
+		a.ed.showDialog = false
+		a.ed.focus = FocusTracker
+		a.ed.status = "Cancelled"
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if len(a.ed.dlgBuf) > 0 {
+			a.ed.dlgBuf = a.ed.dlgBuf[:len(a.ed.dlgBuf)-1]
+		}
+	case tcell.KeyRune:
+		// Accept ordinary printable path characters.
+		if r >= 0x20 && r < 0x7f && len(a.ed.dlgBuf) < 200 {
+			a.ed.dlgBuf += string(r)
+		}
+	}
+}
+
+func (a *App) openDialog(action DialogAction, prompt, initial string) {
+	a.ed.showFile = false
+	a.ed.dlgAction = action
+	a.ed.dlgPrompt = prompt
+	a.ed.dlgBuf = initial
+	a.ed.showDialog = true
+	a.ed.focus = FocusDialog
+}
+
+// fileOption handles a click on a File-menu entry.
+func (a *App) fileOption(i int) {
+	switch i {
+	case 0: // Save
+		if a.ed.projPath != "" {
+			a.doSave(a.ed.projPath)
+			a.ed.showFile = false
+		} else {
+			a.openDialog(DlgSave, "Save project as:", "song.sng")
+		}
+	case 1: // Save As...
+		a.openDialog(DlgSave, "Save project as:", a.defaultName("song.sng"))
+	case 2: // Open...
+		a.openDialog(DlgOpen, "Open project:", a.ed.projPath)
+	case 3: // Export MIDI...
+		a.openDialog(DlgExport, "Export MIDI to:", a.defaultMidiName())
+	}
+}
+
+func (a *App) defaultName(fallback string) string {
+	if a.ed.projPath != "" {
+		return a.ed.projPath
+	}
+	return fallback
+}
+
+func (a *App) defaultMidiName() string {
+	if a.ed.projPath != "" {
+		return strings.TrimSuffix(a.ed.projPath, ".sng") + ".mid"
+	}
+	return "song.mid"
+}
+
+func (a *App) executeDialog() {
+	path := strings.TrimSpace(a.ed.dlgBuf)
+	a.ed.showDialog = false
+	a.ed.focus = FocusTracker
+	if path == "" {
+		a.ed.status = "Cancelled (empty path)"
+		return
+	}
+	switch a.ed.dlgAction {
+	case DlgSave:
+		a.doSave(path)
+	case DlgOpen:
+		a.doOpen(path)
+	case DlgExport:
+		a.doExport(path)
+	}
+}
+
+func (a *App) doSave(path string) {
+	a.song.mu.Lock()
+	data := encodeProject(a.song)
+	a.song.mu.Unlock()
+	if err := writeFile(path, []byte(data)); err != nil {
+		a.ed.status = "Save failed: " + err.Error()
+		return
+	}
+	a.ed.projPath = path
+	a.ed.status = "Saved " + path
+}
+
+func (a *App) doExport(path string) {
+	a.song.mu.Lock()
+	data := encodeMIDI(a.song)
+	a.song.mu.Unlock()
+	if err := writeFile(path, data); err != nil {
+		a.ed.status = "Export failed: " + err.Error()
+		return
+	}
+	a.ed.status = "Exported MIDI to " + path
+}
+
+func (a *App) doOpen(path string) {
+	o, err := loadProject(path)
+	if err != nil {
+		a.ed.status = "Open failed: " + err.Error()
+		return
+	}
+	a.player.stop()
+	a.song.mu.Lock()
+	a.song.replaceWith(o)
+	a.song.mu.Unlock()
+	a.ed.editBlock = 0
+	a.ed.curTrack = 0
+	a.ed.curTick = 0
+	a.ed.curCol = 0
+	a.ed.rollBeat = 0
+	a.ed.selActive = false
+	a.player.setEditBlock(0)
+	a.ed.projPath = path
+	a.ed.status = "Opened " + path
 }
 
 // --- tracker ---
@@ -584,10 +726,14 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		a.ed.showHelp = false
 		return
 	}
+	if a.ed.showDialog {
+		return // modal: use Enter / Esc
+	}
 
 	reg, ok := a.ed.hitTest(x, y)
 	if !ok {
 		a.ed.showSig = false
+		a.ed.showFile = false
 		return
 	}
 	right := sPress
@@ -616,8 +762,14 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		a.song.mu.Unlock()
 	case ActTimeSig:
 		a.ed.showSig = !a.ed.showSig
+		a.ed.showFile = false
 	case ActSigOption:
 		a.selectSig(reg.data1)
+	case ActFileMenu:
+		a.ed.showFile = !a.ed.showFile
+		a.ed.showSig = false
+	case ActFileOption:
+		a.fileOption(reg.data1)
 	case ActMidiOut:
 		a.midi.cycleOut()
 		a.ed.status = "MIDI out: " + a.midi.OutName()
@@ -699,9 +851,12 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		}
 	}
 
-	// Any click that is not on the dropdown (or its toggle) dismisses it.
+	// A click that is not on a menu (or its toggle) dismisses the dropdowns.
 	if reg.action != ActSigOption && reg.action != ActTimeSig {
 		a.ed.showSig = false
+	}
+	if reg.action != ActFileOption && reg.action != ActFileMenu {
+		a.ed.showFile = false
 	}
 }
 

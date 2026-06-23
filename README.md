@@ -48,6 +48,11 @@ ncurses, with live pattern editing for MIDI "looping".
   `●` record-arm, `⟲`/`⟳` loop song/block, `⚠` panic — plus an editable
   **BPM** field, a **time-signature dropdown** (3/4, 4/4, 5/4), and **MIDI
   output / input** selectors.
+* **Save / load / export.** Projects are stored as a small, human-readable
+  plain-text format (`.sng`); songs can also be exported to a Standard MIDI
+  File (`.mid`). Use the **File** menu (Save / Save As / Open / Export MIDI)
+  with a path dialog, the keys **Ctrl+S / Ctrl+O / Ctrl+E**, or the
+  command-line flags `-load` and `-export`.
 * **F1 help overlay** listing every hotkey; any key or click dismisses it.
 * **Live editing while playing.** Edits to the model are picked up by the
   playback engine on the next tick, so you can build loops in real time.
@@ -101,6 +106,41 @@ shows `<no portmidi>`); everything works except sound.
 > only the cgo build directives changed to be platform-aware so no Homebrew
 > prefix shimming is needed.
 
+## Command line
+
+```sh
+sizzletracker                       # start empty
+sizzletracker song.sng              # open a project (also: -load song.sng)
+sizzletracker -load song.sng -export song.mid   # render to MIDI and exit
+```
+
+`-load FILE` opens a `.sng` project at startup; `-export FILE` renders the
+loaded (or default) song to a Standard MIDI File and exits without launching
+the UI.
+
+## File format
+
+A project (`.sng`) is line-oriented plain text — easy to read, diff, and
+hand-edit:
+
+```
+version 1
+bpm 120
+sig 4 4
+
+block A 16 4
+roll ####
+track T1 0
+0 C-4 64 01
+4 E-4 .. ..
+8 OFF .. ..
+endblock
+```
+
+Step lines are `<tick> <note> <vel> <chan>`: note as `C-4` (or `OFF`), velocity
+in hex (`..` = default), channel 1-based (`..` = inherit). The `roll` line is
+one character per beat (`#` = the block plays that beat).
+
 ## Keyboard
 
 Global:
@@ -115,6 +155,8 @@ Global:
 | `F7` | Toggle follow-playhead |
 | `F8` | Panic (all notes off) |
 | `F9` | Edit BPM field (type, `Enter` confirm, `Esc` cancel) |
+| `Ctrl+S` / `Ctrl+O` | Save / Open project (path dialog) |
+| `Ctrl+E` | Export to MIDI (path dialog) |
 | `F1` | Open the help overlay (any key/click closes it) |
 | `F10` | Quit |
 
@@ -166,7 +208,8 @@ block to keep its bar count.
 | File | Responsibility |
 |------|----------------|
 | `model.go` | Data model: `Song` → `Block` → `Track` → `Step`, the piano-roll `Roll` grid, and time-signature tick math. Guarded by `Song.mu`. |
-| `midi.go` | PortMidi output/input wrapper (port selection, note on/off, punch-in listener). |
+| `midi.go` | PortMidi output/input wrapper (port selection, note on/off, punch-in listener, CC/PC passthrough). |
+| `project.go` | Plain-text `.sng` save/load and Standard MIDI File export. |
 | `internal/portmidi/` | Vendored PortMidi cgo binding with platform-aware build flags. |
 | `player.go` | Timing goroutine; each tick it *collects* note events under lock and emits MIDI after releasing the lock, so playback timing is unaffected by rendering or input. |
 | `editor.go` | UI/interaction state and the clickable-region hit-test system. |

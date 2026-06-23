@@ -12,6 +12,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -62,6 +63,32 @@ func main() {
 }
 
 func run() error {
+	loadPath := flag.String("load", "", "project file (.sng) to open at startup")
+	exportPath := flag.String("export", "", "render the (loaded or default) song to this MIDI file and exit")
+	flag.Parse()
+	if *loadPath == "" && flag.NArg() > 0 {
+		*loadPath = flag.Arg(0) // allow a positional project path
+	}
+
+	// Resolve the starting song (default or loaded from disk).
+	song := newSong()
+	if *loadPath != "" {
+		o, err := loadProject(*loadPath)
+		if err != nil {
+			return fmt.Errorf("load %s: %w", *loadPath, err)
+		}
+		song = o
+	}
+
+	// Headless MIDI export: render and exit without launching the TUI.
+	if *exportPath != "" {
+		if err := writeMIDIFile(song, *exportPath); err != nil {
+			return fmt.Errorf("export %s: %w", *exportPath, err)
+		}
+		fmt.Println("exported MIDI to", *exportPath)
+		return nil
+	}
+
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return fmt.Errorf("tcell new screen: %w", err)
@@ -77,10 +104,13 @@ func run() error {
 	screen.HideCursor()
 	screen.Clear()
 
-	song := newSong()
 	mid := newMidiEngine()
 	player := newPlayer(song, mid)
 	ed := newEditor()
+	if *loadPath != "" {
+		ed.projPath = *loadPath
+		ed.status = "Loaded " + *loadPath
+	}
 
 	app := &App{
 		screen: screen,
