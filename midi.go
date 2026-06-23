@@ -30,8 +30,9 @@ type MidiEngine struct {
 	inStop  chan struct{}
 
 	// onIn reports note events from the input device: on=true for note-on
-	// (velocity > 0), on=false for note-off (or note-on with velocity 0).
-	onIn func(on bool, note, vel int)
+	// (velocity > 0), on=false for note-off (or note-on with velocity 0). ch is
+	// the 0-based MIDI channel from the status byte (0..15).
+	onIn func(on bool, note, vel, ch int)
 }
 
 func newMidiEngine() *MidiEngine {
@@ -175,11 +176,12 @@ func (m *MidiEngine) selectIn(idx int) {
 			if err == nil && cb != nil {
 				for _, e := range events {
 					status := e.Status & 0xf0
+					ch := int(e.Status & 0x0f)
 					switch {
 					case status == 0x90 && e.Data2 > 0:
-						cb(true, int(e.Data1), int(e.Data2))
+						cb(true, int(e.Data1), int(e.Data2), ch)
 					case status == 0x80 || (status == 0x90 && e.Data2 == 0):
-						cb(false, int(e.Data1), int(e.Data2))
+						cb(false, int(e.Data1), int(e.Data2), ch)
 					}
 				}
 			}
@@ -204,7 +206,7 @@ func (m *MidiEngine) cycleIn() {
 	m.selectIn(next)
 }
 
-func (m *MidiEngine) setInputCallback(cb func(on bool, note, vel int)) {
+func (m *MidiEngine) setInputCallback(cb func(on bool, note, vel, ch int)) {
 	m.mu.Lock()
 	m.onIn = cb
 	m.mu.Unlock()

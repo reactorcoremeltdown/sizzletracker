@@ -782,9 +782,14 @@ func (a *App) freePunchTrack(blk *Block) int {
 	return len(blk.Tracks) - 1
 }
 
-func (a *App) applyPunch(on bool, note, vel int) {
+func (a *App) applyPunch(on bool, note, vel, ch int) {
 	if !a.ed.armed {
 		return
+	}
+	// Record the incoming channel; default to channel 1 (index 0) when the
+	// channel is unknown / out of range.
+	if ch < 0 || ch > 15 {
+		ch = 0
 	}
 	playing := a.player.isPlaying()
 
@@ -804,6 +809,7 @@ func (a *App) applyPunch(on bool, note, vel int) {
 			st := &blk.Tracks[tr].Steps[tick]
 			st.Note = note
 			st.Vel = vel
+			st.Chan = ch
 		}
 		a.ed.punch[note] = punchInfo{track: tr, tick: tick}
 		voices := len(a.ed.punch)

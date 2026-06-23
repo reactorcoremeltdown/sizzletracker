@@ -24,6 +24,7 @@ type inEvent struct {
 	on   bool
 	note int
 	vel  int
+	ch   int // 0-based MIDI channel from the status byte
 }
 
 // App wires together the document, the MIDI engine, the player and the editor.
@@ -94,9 +95,9 @@ func run() error {
 
 	// Route incoming MIDI notes to the UI goroutine over a channel so the
 	// editor state is only ever touched from one place.
-	mid.setInputCallback(func(on bool, note, vel int) {
+	mid.setInputCallback(func(on bool, note, vel, ch int) {
 		select {
-		case app.midiIn <- inEvent{on, note, vel}:
+		case app.midiIn <- inEvent{on, note, vel, ch}:
 		default:
 		}
 	})
@@ -140,7 +141,7 @@ func (a *App) loop() {
 			}
 		case <-ticker.C:
 		case mev := <-a.midiIn:
-			a.applyPunch(mev.on, mev.note, mev.vel)
+			a.applyPunch(mev.on, mev.note, mev.vel, mev.ch)
 		}
 
 		// Drain anything else that's queued so a key-repeat flood collapses
@@ -153,7 +154,7 @@ func (a *App) loop() {
 					return
 				}
 			case mev := <-a.midiIn:
-				a.applyPunch(mev.on, mev.note, mev.vel)
+				a.applyPunch(mev.on, mev.note, mev.vel, mev.ch)
 			default:
 				drain = false
 			}
