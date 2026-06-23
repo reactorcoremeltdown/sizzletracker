@@ -142,6 +142,27 @@ Step lines are `<tick> <note> <vel> <chan>`: note as `C-4` (or `OFF`), velocity
 in hex (`..` = default), channel 1-based (`..` = inherit). The `roll` line is
 one character per beat (`#` = the block plays that beat).
 
+## Config & crash recovery
+
+Application state lives in the per-user config directory each OS expects
+(`os.UserConfigDir` + `sizzletracker`):
+
+| OS | Location |
+|----|----------|
+| Linux / BSD | `~/.config/sizzletracker` (or `$XDG_CONFIG_HOME`) |
+| macOS | `~/Library/Application Support/sizzletracker` |
+| Windows | `%AppData%\sizzletracker` |
+
+It contains:
+
+- **`config.json`** — preferences saved on exit: the selected MIDI out/in
+  ports (reconnected by name next launch), the tracker/roll pane split, and
+  the last project path.
+- **`recovery.sng`** — the working song, **autosaved every 10 s and on exit**.
+  On the next launch (when no file is given with `-load`) it is restored
+  automatically, so unsaved edits survive a crash or an unclean exit. Use
+  `Ctrl+S` to write your work to a real project file.
+
 ## Keyboard
 
 Global:
@@ -211,6 +232,7 @@ block to keep its bar count.
 | `model.go` | Data model: `Song` → `Block` → `Track` → `Step`, the piano-roll `Roll` grid, and time-signature tick math. Guarded by `Song.mu`. |
 | `midi.go` | PortMidi output/input wrapper (port selection, note on/off, punch-in listener, CC/PC passthrough). |
 | `project.go` | Plain-text `.sng` save/load and Standard MIDI File export. |
+| `config.go` | Per-user config dir, preferences (`config.json`) and crash-recovery autosave path. |
 | `internal/portmidi/` | Vendored PortMidi cgo binding with platform-aware build flags. |
 | `player.go` | Timing goroutine; each tick it *collects* note events under lock and emits MIDI after releasing the lock, so playback timing is unaffected by rendering or input. |
 | `editor.go` | UI/interaction state and the clickable-region hit-test system. |

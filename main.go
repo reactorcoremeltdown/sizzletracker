@@ -39,6 +39,9 @@ type App struct {
 	midiIn chan inEvent
 	events chan tcell.Event
 
+	// recPath is the crash-recovery autosave file ("" disables recovery).
+	recPath string
+
 	// Previous mouse button mask, for detecting press/drag/release transitions
 	// (tcell delivers raw button-state snapshots).
 	prevBtn tcell.ButtonMask
@@ -73,14 +76,25 @@ func run() error {
 		*loadPath = flag.Arg(0) // allow a positional project path
 	}
 
-	// Resolve the starting song (default or loaded from disk).
+	cfg := loadConfig()
+	recPath := recoveryPath()
+
+	// Resolve the starting song: an explicit -load wins; otherwise restore the
+	// crash-recovery autosave from the previous session; otherwise start fresh.
 	song := newSong()
-	if *loadPath != "" {
+	recovered := false
+	switch {
+	case *loadPath != "":
 		o, err := loadProject(*loadPath)
 		if err != nil {
 			return fmt.Errorf("load %s: %w", *loadPath, err)
 		}
 		song = o
+	case fileExists(recPath):
+		if o, err := loadProject(recPath); err == nil {
+			song = o
+			recovered = true
+		}
 	}
 
 	// Headless MIDI export: render and exit without launching the TUI.
@@ -108,21 +122,33 @@ func run() error {
 	screen.Clear()
 
 	mid := newMidiEngine()
+	// Reconnect to the devices chosen in the previous session, if present.
+	mid.selectOutByName(cfg.MidiOut)
+	mid.selectInByName(cfg.MidiIn)
+
 	player := newPlayer(song, mid)
 	ed := newEditor()
-	if *loadPath != "" {
+	if cfg.LowerH > 0 {
+		ed.lowerH = cfg.LowerH
+	}
+	switch {
+	case *loadPath != "":
 		ed.projPath = *loadPath
 		ed.status = "Loaded " + *loadPath
+	case recovered:
+		ed.projPath = cfg.LastPath // Save targets the real project, if any
+		ed.status = "Recovered previous session (autosave)"
 	}
 
 	app := &App{
-		screen: screen,
-		song:   song,
-		midi:   mid,
-		player: player,
-		ed:     ed,
-		midiIn: make(chan inEvent, 128),
-		events: make(chan tcell.Event, 128),
+		screen:  screen,
+		song:    song,
+		midi:    mid,
+		player:  player,
+		ed:      ed,
+		midiIn:  make(chan inEvent, 128),
+		events:  make(chan tcell.Event, 128),
+		recPath: recPath,
 	}
 	player.setEditBlock(ed.editBlock)
 
@@ -156,15 +182,48 @@ func run() error {
 	defer close(quitPump)
 
 	app.loop()
+
+	// Clean exit: persist the working song (recovery) and preferences. The
+	// loop also autosaves recovery periodically so a crash loses little.
+	app.saveRecovery()
+	saveAppConfig(app)
 	return nil
+}
+
+// saveRecovery writes the current song to the crash-recovery file. Encodes
+// under the song lock, writes without it.
+func (a *App) saveRecovery() {
+	if a.recPath == "" {
+		return
+	}
+	a.song.mu.Lock()
+	data := encodeProject(a.song)
+	a.song.mu.Unlock()
+	_ = writeFile(a.recPath, []byte(data))
+}
+
+// saveAppConfig persists the current preferences.
+func saveAppConfig(a *App) {
+	cfg := Config{
+		MidiOut:  realPortName(a.midi.OutName()),
+		MidiIn:   realPortName(a.midi.InName()),
+		LowerH:   a.ed.lowerH,
+		LastPath: a.ed.projPath,
+	}
+	_ = cfg.save()
 }
 
 // loop is the main event/render loop. tcell events drive UI updates, the
 // frame ticker guarantees a redraw cadence (so the playhead animates even
 // when the user is idle), and any pending MIDI input is drained per iteration.
+// autosaveEvery bounds how much work a crash can lose: the working song is
+// written to the recovery file at least this often.
+const autosaveEvery = 10 * time.Second
+
 func (a *App) loop() {
 	ticker := time.NewTicker(frameInterval)
 	defer ticker.Stop()
+	nextAutosave := time.Now().Add(autosaveEvery)
 
 	for {
 		select {
@@ -194,6 +253,11 @@ func (a *App) loop() {
 		}
 
 		a.draw()
+
+		if time.Now().After(nextAutosave) {
+			a.saveRecovery()
+			nextAutosave = time.Now().Add(autosaveEvery)
+		}
 	}
 }
 

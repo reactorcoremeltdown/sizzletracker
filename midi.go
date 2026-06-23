@@ -134,6 +134,49 @@ func (m *MidiEngine) InName() string {
 func (m *MidiEngine) numOut() int { m.mu.Lock(); defer m.mu.Unlock(); return len(m.outs) }
 func (m *MidiEngine) numIn() int  { m.mu.Lock(); defer m.mu.Unlock(); return len(m.ins) }
 
+// selectOutByName opens the output port whose name matches (used to restore the
+// device chosen in a previous session). Returns whether it was found.
+func (m *MidiEngine) selectOutByName(name string) bool {
+	if name == "" {
+		return false
+	}
+	m.mu.Lock()
+	idx := -1
+	for i, d := range m.outs {
+		if d.name == name {
+			idx = i
+			break
+		}
+	}
+	m.mu.Unlock()
+	if idx < 0 {
+		return false
+	}
+	m.selectOut(idx)
+	return true
+}
+
+// selectInByName opens the input port whose name matches.
+func (m *MidiEngine) selectInByName(name string) bool {
+	if name == "" {
+		return false
+	}
+	m.mu.Lock()
+	idx := -1
+	for i, d := range m.ins {
+		if d.name == name {
+			idx = i
+			break
+		}
+	}
+	m.mu.Unlock()
+	if idx < 0 {
+		return false
+	}
+	m.selectIn(idx)
+	return true
+}
+
 func (m *MidiEngine) selectOut(idx int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
