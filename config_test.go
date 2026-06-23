@@ -26,25 +26,24 @@ func TestConfigRoundTrip(t *testing.T) {
 		t.Errorf("app dir %q not under temp HOME %q", dir, tmp)
 	}
 
-	c := Config{MidiOut: "IAC Bus 1", MidiIn: "Keystation", LowerH: 12, LastPath: "/songs/x.sng"}
+	c := Config{
+		LowerH:   12,
+		LastPath: "/songs/x.sng",
+		Patch:    []string{"Tracker>>IAC Bus 1", "Keystation>>IAC Bus 1"},
+		Filters:  map[string][]int{"IAC Bus 1": {0, 1, 2}},
+	}
 	if err := c.save(); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if got := loadConfig(); got != c {
-		t.Errorf("round-trip: got %+v, want %+v", got, c)
+	got := loadConfig()
+	if got.LowerH != c.LowerH || got.LastPath != c.LastPath {
+		t.Errorf("scalars: got %+v, want %+v", got, c)
 	}
-}
-
-func TestRealPortName(t *testing.T) {
-	for in, want := range map[string]string{
-		"<off>":         "",
-		"<none>":        "",
-		"<no portmidi>": "",
-		"IAC Driver":    "IAC Driver",
-	} {
-		if got := realPortName(in); got != want {
-			t.Errorf("realPortName(%q) = %q, want %q", in, got, want)
-		}
+	if len(got.Patch) != 2 || got.Patch[0] != "Tracker>>IAC Bus 1" {
+		t.Errorf("patch round-trip: %v", got.Patch)
+	}
+	if chans := got.Filters["IAC Bus 1"]; len(chans) != 3 || chans[2] != 2 {
+		t.Errorf("filters round-trip: %v", got.Filters)
 	}
 }
 

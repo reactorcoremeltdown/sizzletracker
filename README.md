@@ -47,8 +47,16 @@ ncurses, with live pattern editing for MIDI "looping".
   separator bar** between the tracker and the roll to resize the two panes.
 * **Transport in the top bar** with glyph buttons — `▶` play, `■` stop,
   `●` record-arm, `⟲`/`⟳` loop song/block, `⚠` panic — plus an editable
-  **BPM** field, a **time-signature dropdown** (3/4, 4/4, 5/4), and **MIDI
-  output / input** selectors.
+  **BPM** field, a **time-signature dropdown** (3/4, 4/4, 5/4), and **Edit /
+  Patchbay** view tabs.
+* **MIDI patchbay** (the **Patchbay** tab, or `F4`). A routing matrix where
+  columns are MIDI inputs and rows are MIDI outputs; a `*` at an intersection
+  (click or `Enter`) connects that input to that output. A special **Trk**
+  input carries the sequencer's notes **and its MIDI clock** (24 PPQN +
+  start/stop). Each output has a **channel-filter dropdown** (`All` / `None`
+  / toggle individual channels) — placing channel marks keeps it open;
+  clicking outside or `Esc` closes it. Hardware-input rows are live MIDI thru.
+  The routing is saved with your preferences.
 * **Save / load / export.** Projects are stored as a small, human-readable
   plain-text format (`.sng`); songs can also be exported to a Standard MIDI
   File (`.mid`). Use the **File** menu (Save / Save As / Open / Export MIDI)
@@ -59,12 +67,12 @@ ncurses, with live pattern editing for MIDI "looping".
   playback engine on the next tick, so you can build loops in real time.
   Set **Loop:Block** to repeat the edited block indefinitely for live
   looping.
-* **MIDI punch-in with note length.** Arm record (`()` / `F5`) and select a
-  MIDI input. When **playing**, controller note-on writes a note at the
-  playhead on the cursor track and the matching **note-off** writes a
-  NOTE-OFF event — so the recorded note sustains exactly as long as you held
-  the key. When **stopped** it acts as a step recorder (note-on writes and
-  advances). A note sounds until a note-off (or a retrigger) on its track.
+* **MIDI punch-in with note length.** Arm record (`●` / `F5`) and play any
+  connected controller. When **playing**, controller note-on writes a note at
+  the playhead and the matching **note-off** writes a NOTE-OFF event — so the
+  recorded note sustains exactly as long as you held the key; held notes spread
+  across tracks (polyphonic), creating tracks as needed. When **stopped** it
+  acts as a chord step recorder. A note sounds until a note-off (or retrigger).
 * **Mouse support** throughout: click transport buttons, click a tracker
   cell to move the cursor, right-click a cell to clear it; in the piano roll,
   click a marker to toggle it, right-click to erase, and **drag to select** a
@@ -177,6 +185,7 @@ Global:
 | `F7` | Toggle follow-playhead |
 | `F8` | Panic (all notes off) |
 | `F9` | Edit BPM field (type, `Enter` confirm, `Esc` cancel) |
+| `F4` | Toggle Edit / Patchbay view |
 | `Ctrl+S` / `Ctrl+O` | Save / Open project (path dialog) |
 | `Ctrl+E` | Export to MIDI (path dialog) |
 | `F1` | Open the help overlay (any key/click closes it) |
@@ -230,7 +239,7 @@ block to keep its bar count.
 | File | Responsibility |
 |------|----------------|
 | `model.go` | Data model: `Song` → `Block` → `Track` → `Step`, the piano-roll `Roll` grid, and time-signature tick math. Guarded by `Song.mu`. |
-| `midi.go` | PortMidi output/input wrapper (port selection, note on/off, punch-in listener, CC/PC passthrough). |
+| `midi.go` | PortMidi patchbay: opens all in/out ports, routes inputs→outputs through a matrix + per-output channel filters, fans the tracker source (notes+clock) out to connected outputs, and feeds the punch-in recorder. |
 | `project.go` | Plain-text `.sng` save/load and Standard MIDI File export. |
 | `config.go` | Per-user config dir, preferences (`config.json`) and crash-recovery autosave path. |
 | `internal/portmidi/` | Vendored PortMidi cgo binding with platform-aware build flags. |

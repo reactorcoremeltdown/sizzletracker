@@ -207,12 +207,15 @@ func (a *App) draw() {
 
 	fr := a.snapshot()
 
-	trackerH, sepY, arrangeY, lowerH := a.layout(h)
-
 	a.drawTopBar(0, w, fr)
-	a.drawTracker(1, trackerH, w, fr)
-	a.drawSeparator(sepY, w)
-	a.drawPianoRoll(arrangeY, lowerH, w, fr)
+	if a.ed.view == ViewPatch {
+		a.drawPatchbay(1, h-2, w)
+	} else {
+		trackerH, sepY, arrangeY, lowerH := a.layout(h)
+		a.drawTracker(1, trackerH, w, fr)
+		a.drawSeparator(sepY, w)
+		a.drawPianoRoll(arrangeY, lowerH, w, fr)
+	}
 	a.drawStatus(h-1, w)
 
 	if a.ed.showSig {
@@ -220,6 +223,9 @@ func (a *App) draw() {
 	}
 	if a.ed.showFile {
 		a.drawFileDropdown()
+	}
+	if a.ed.view == ViewPatch && a.ed.chanMenuOut >= 0 {
+		a.drawChanMenu(a.ed.chanMenuOut, w, h)
 	}
 	if a.ed.showHelp {
 		a.drawHelp(h, w)
@@ -270,6 +276,180 @@ func (a *App) drawSeparator(y, w int) {
 	label := "[ drag to resize ]"
 	a.put(y, (w-cellWidth(label))/2, label, styBtn)
 	a.ed.addRegion(Region{x: 0, y: y, w: w, h: 1, action: ActSeparator})
+}
+
+// --- Patchbay ------------------------------------------------------------
+
+// inShort is the short column label for input i (Trk for the Tracker source).
+func inShort(i int) string {
+	if i == 0 {
+		return "Trk"
+	}
+	return "I" + strconvI(i)
+}
+
+const (
+	patchGutter = 24 // output name + channel-filter button
+	patchColW   = 5  // per-input column width
+	patchFiltX  = 14 // x of the per-row filter button
+)
+
+func (a *App) drawPatchbay(top, height, w int) {
+	ni := a.midi.numInputs()
+	no := a.midi.numOutputs()
+
+	matrixX := patchGutter
+	visIn := (w - matrixX) / patchColW
+	if visIn < 1 {
+		visIn = 1
+	}
+	legendH := 2
+	rowsTop := top + 1
+	rowsH := height - 1 - legendH
+	if rowsH < 1 {
+		rowsH = 1
+	}
+
+	// Clamp cursor and scroll so the cursor cell stays visible.
+	a.ed.patchIn = clampInt(a.ed.patchIn, 0, max(0, ni-1))
+	a.ed.patchOut = clampInt(a.ed.patchOut, 0, max(0, no-1))
+	if a.ed.patchIn < a.ed.patchInScr {
+		a.ed.patchInScr = a.ed.patchIn
+	}
+	if a.ed.patchIn >= a.ed.patchInScr+visIn {
+		a.ed.patchInScr = a.ed.patchIn - visIn + 1
+	}
+	a.ed.patchInScr = clampInt(a.ed.patchInScr, 0, max(0, ni-visIn))
+	if a.ed.patchOut < a.ed.patchOutScr {
+		a.ed.patchOutScr = a.ed.patchOut
+	}
+	if a.ed.patchOut >= a.ed.patchOutScr+rowsH {
+		a.ed.patchOutScr = a.ed.patchOut - rowsH + 1
+	}
+	a.ed.patchOutScr = clampInt(a.ed.patchOutScr, 0, max(0, no-rowsH))
+
+	// Column header.
+	a.put(top, 0, "OUTPUT / chan", styAccent)
+	for c := 0; c < visIn; c++ {
+		in := a.ed.patchInScr + c
+		if in >= ni {
+			break
+		}
+		sty := styHeader
+		if a.ed.view == ViewPatch && in == a.ed.patchIn {
+			sty = styBtnOn
+		}
+		a.put(top, matrixX+c*patchColW, fmt.Sprintf("%-*s", patchColW, inShort(in)), sty)
+	}
+
+	if no == 0 {
+		a.put(rowsTop, 0, "No MIDI outputs available.", styDim)
+	}
+	for r := 0; r < rowsH; r++ {
+		o := a.ed.patchOutScr + r
+		if o >= no {
+			break
+		}
+		y := rowsTop + r
+		a.put(y, 0, fmt.Sprintf("%-13.13s", trunc(a.midi.outputName(o), 13)), styNormal)
+
+		fb := fmt.Sprintf("[%s]", a.midi.filterSummary(o))
+		fbSty := styBtn
+		if a.ed.chanMenuOut == o {
+			fbSty = styBtnOn
+		}
+		a.put(y, patchFiltX, fmt.Sprintf("%-9.9s", fb), fbSty)
+		a.ed.addRegion(Region{x: patchFiltX, y: y, w: 9, h: 1, action: ActChanMenu, data1: o})
+
+		for c := 0; c < visIn; c++ {
+			in := a.ed.patchInScr + c
+			if in >= ni {
+				break
+			}
+			x := matrixX + c*patchColW
+			on := a.midi.route(in, o)
+			mark := "."
+			sty := styNormal
+			if on {
+				mark = "*"
+				sty = styBtnOn
+			}
+			if a.ed.view == ViewPatch && in == a.ed.patchIn && o == a.ed.patchOut {
+				sty = styCursor
+			}
+			a.put(y, x+2, mark, sty)
+			a.ed.addRegion(Region{x: x, y: y, w: patchColW, h: 1, action: ActPatchCell, data1: in, data2: o})
+		}
+	}
+
+	// Legend (input names) on the bottom rows.
+	ly := top + height - legendH
+	a.put(ly, 0, "in:", styDim)
+	lx := 4
+	for in := 0; in < ni; in++ {
+		s := inShort(in) + "=" + trunc(a.midi.inputName(in), 18) + "  "
+		if lx+cellWidth(s) > w {
+			ly++
+			lx = 4
+			if ly >= top+height {
+				break
+			}
+		}
+		a.put(ly, lx, s, styDim)
+		lx += cellWidth(s)
+	}
+}
+
+// drawChanMenu renders the per-output channel-filter dropdown. It stays open
+// while toggling channels; only an outside click or Esc closes it.
+func (a *App) drawChanMenu(o, w, h int) {
+	const cols, rows = 4, 4
+	cellW := 4
+	bw := cols*cellW + 2
+	bh := 4 + rows // border + title + all/none + grid
+	x0 := patchFiltX
+	if x0+bw > w {
+		x0 = w - bw - 1
+	}
+	y0 := 2
+	if y0+bh > h-1 {
+		y0 = h - 1 - bh
+	}
+	if y0 < 1 {
+		y0 = 1
+	}
+
+	for r := 0; r < bh; r++ {
+		a.fill(y0+r, x0, bw, ' ', styHeader)
+	}
+	border := styHeader.Bold(true)
+	a.put(y0, x0, "+"+strings.Repeat("-", bw-2)+"+", border)
+	a.put(y0+bh-1, x0, "+"+strings.Repeat("-", bw-2)+"+", border)
+	a.put(y0, x0+2, " chan "+trunc(a.midi.outputName(o), bw-9)+" ", border)
+
+	// All / None.
+	allX := x0 + 1
+	a.put(y0+1, allX, " All ", styBtn)
+	a.ed.addRegion(Region{x: allX, y: y0 + 1, w: 5, h: 1, action: ActChanAll, data1: o})
+	noneX := allX + 6
+	a.put(y0+1, noneX, " None ", styBtn)
+	a.ed.addRegion(Region{x: noneX, y: y0 + 1, w: 6, h: 1, action: ActChanNone, data1: o})
+
+	// 16 channel toggles in a 4x4 grid.
+	for ch := 0; ch < 16; ch++ {
+		gr := ch / cols
+		gc := ch % cols
+		cx := x0 + 1 + gc*cellW
+		cy := y0 + 2 + gr
+		mark := " "
+		sty := styBtn
+		if a.midi.filterOn(o, ch) {
+			mark = "*"
+			sty = styBtnOn
+		}
+		a.put(cy, cx, fmt.Sprintf("%2d%s", ch+1, mark), sty)
+		a.ed.addRegion(Region{x: cx, y: cy, w: cellW, h: 1, action: ActChanCell, data1: o, data2: ch})
+	}
 }
 
 // --- Top bar -------------------------------------------------------------
@@ -330,16 +510,9 @@ func (a *App) drawTopBar(y, w int, fr *frame) {
 	sigTxt := " Sig:" + fr.sig.String() + " v "
 	x = a.putRegion(y, x, sigTxt, sigSty, ActTimeSig)
 
-	out := " Out:" + trunc(a.midi.OutName(), 16) + " "
-	x = a.putRegion(y, x, out, styBtn, ActMidiOut)
-
-	inName := a.midi.InName()
-	inSty := styBtn
-	if inName != "<off>" {
-		inSty = styBtnOn
-	}
-	in := " In:" + trunc(inName, 14) + " "
-	a.putRegion(y, x, in, inSty, ActMidiIn)
+	// View tabs (replace the old MIDI out/in fields).
+	x = a.button(y, x, "Edit", a.ed.view == ViewEdit, ActTabEdit)
+	a.button(y, x, "Patchbay", a.ed.view == ViewPatch, ActTabPatch)
 }
 
 // putRegion draws s and registers a hit-region of the correct cell width.
@@ -729,11 +902,12 @@ func (a *App) drawStatus(y, w int) {
 var helpLines = []string{
 	"# Transport (top bar)",
 	"  ▶ play/stop   ■ stop   ● rec   ⟲/⟳ loop   ⚠ panic",
-	"  File menu, BPM, Sig, Out, In are clickable fields.",
+	"  File, Edit/Patchbay tabs, BPM and Sig are clickable.",
 	"",
 	"# Global",
 	"  Space play/stop   Tab switch pane   F1 help   F2/F3 focus",
-	"  F5 rec   F6 loop   F7 follow   F8 panic   F9 BPM   F10 quit",
+	"  F4 Edit/Patchbay   F5 rec   F6 loop   F7 follow   F8 panic",
+	"  F9 BPM   F10 quit",
 	"",
 	"# Files (File menu, or keys)",
 	"  Ctrl+S save   Ctrl+O open   Ctrl+E export MIDI",
@@ -756,11 +930,16 @@ var helpLines = []string{
 	"  Click a marker to toggle it; right-click to erase.",
 	"  Drag the separator bar to resize the tracker / roll panes.",
 	"",
+	"# Patchbay (F4)",
+	"  Rows = outputs, columns = inputs (Trk = tracker notes+clock).",
+	"  Arrows move; Enter / * / click toggles a connection.",
+	"  [..] per output opens a channel filter: All / None / toggle",
+	"  channels (stays open; click outside or Esc closes). c opens it.",
+	"",
 	"# Live punch-in (polyphonic)",
-	"  Pick 'In:', arm record (F5). Controller note-on/off record at",
-	"  the playhead. Each held note takes its own track; chords overflow",
-	"  to free tracks and new tracks are created automatically.",
-	"  CC and Program Change from the input pass through to the output.",
+	"  Arm record (F5); play a connected controller. Note-on/off record",
+	"  at the playhead. Each held note takes its own track; chords",
+	"  overflow to free tracks, creating new tracks as needed.",
 }
 
 func (a *App) drawHelp(h, w int) {

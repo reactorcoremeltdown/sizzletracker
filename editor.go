@@ -1,5 +1,14 @@
 package main
 
+// View selects the main screen: the editor (tracker + piano roll) or the
+// MIDI patchbay.
+type View int
+
+const (
+	ViewEdit View = iota
+	ViewPatch
+)
+
 // Focus identifies which pane currently receives keyboard input.
 type Focus int
 
@@ -43,8 +52,14 @@ const (
 	ActSigOption  // data1=index into timeSigs
 	ActFileMenu   // open the File dropdown
 	ActFileOption // data1=index into fileMenu
-	ActMidiOut
-	ActMidiIn
+	ActTabEdit    // switch to the editor view
+	ActTabPatch   // switch to the patchbay view
+	// Patchbay.
+	ActPatchCell   // data1=input, data2=output (toggle a connection)
+	ActChanMenu    // data1=output (open the channel-filter dropdown)
+	ActChanCell    // data1=output, data2=channel (toggle one channel)
+	ActChanAll     // data1=output (all channels on)
+	ActChanNone    // data1=output (all channels off)
 	ActTrackerCell // data1=track, data2=tick, data3=column
 	ActAddTrack
 	ActDelTrack  // data1=track index to delete
@@ -78,6 +93,15 @@ func (r Region) hit(x, y int) bool {
 // Editor holds all UI/interaction state (never touched by the player goroutine).
 type Editor struct {
 	focus Focus
+	view  View
+
+	// Patchbay cursor + scroll, and which output's channel dropdown is open
+	// (-1 = none).
+	patchIn     int
+	patchOut    int
+	patchInScr  int
+	patchOutScr int
+	chanMenuOut int
 
 	// Tracker cursor (which block we edit, and the cell within it). editBlock
 	// doubles as the piano-roll row cursor.
@@ -147,13 +171,14 @@ type punchInfo struct {
 
 func newEditor() *Editor {
 	return &Editor{
-		focus:     FocusTracker,
-		editBlock: 0,
-		octave:    4,
-		step:      1,
-		follow:    true,
-		punch:     make(map[int]punchInfo),
-		status:    "Ready. Press F1 for help.",
+		focus:       FocusTracker,
+		editBlock:   0,
+		octave:      4,
+		step:        1,
+		follow:      true,
+		punch:       make(map[int]punchInfo),
+		chanMenuOut: -1,
+		status:      "Ready. Press F1 for help.",
 	}
 }
 

@@ -105,6 +105,43 @@ func (p *Player) start() {
 	p.mu.Unlock()
 
 	go p.run(stop)
+	go p.clock(stop)
+}
+
+// clock emits MIDI clock (24 PPQN) plus Start/Stop to whatever outputs the
+// Tracker source is patched to. It runs independently of the tick loop because
+// 24 PPQN does not divide evenly into the per-signature tick rate.
+func (p *Player) clock(stop chan struct{}) {
+	p.midi.sendStart()
+	next := time.Now()
+	for {
+		select {
+		case <-stop:
+			p.midi.sendStop()
+			return
+		default:
+		}
+		p.midi.sendClock()
+
+		p.song.mu.Lock()
+		bpm := p.song.BPM
+		p.song.mu.Unlock()
+		if bpm < 1 {
+			bpm = 120
+		}
+		next = next.Add(time.Duration(60.0 / bpm / 24.0 * float64(time.Second)))
+		d := time.Until(next)
+		if d < 0 {
+			next = time.Now()
+			d = 0
+		}
+		select {
+		case <-stop:
+			p.midi.sendStop()
+			return
+		case <-time.After(d):
+		}
+	}
 }
 
 func (p *Player) stop() {

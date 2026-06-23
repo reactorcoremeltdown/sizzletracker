@@ -122,9 +122,10 @@ func run() error {
 	screen.Clear()
 
 	mid := newMidiEngine()
-	// Reconnect to the devices chosen in the previous session, if present.
-	mid.selectOutByName(cfg.MidiOut)
-	mid.selectInByName(cfg.MidiIn)
+	// Restore the patchbay routing from the previous session, if present.
+	if len(cfg.Patch) > 0 || len(cfg.Filters) > 0 {
+		mid.applyPatch(cfg.Patch, cfg.Filters)
+	}
 
 	player := newPlayer(song, mid)
 	ed := newEditor()
@@ -204,11 +205,12 @@ func (a *App) saveRecovery() {
 
 // saveAppConfig persists the current preferences.
 func saveAppConfig(a *App) {
+	routes, filters := a.midi.exportPatch()
 	cfg := Config{
-		MidiOut:  realPortName(a.midi.OutName()),
-		MidiIn:   realPortName(a.midi.InName()),
 		LowerH:   a.ed.lowerH,
 		LastPath: a.ed.projPath,
+		Patch:    routes,
+		Filters:  filters,
 	}
 	_ = cfg.save()
 }

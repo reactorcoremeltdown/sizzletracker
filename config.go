@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // Application state lives in the per-user config directory that each OS expects
@@ -19,10 +18,10 @@ const appName = "sizzletracker"
 
 // Config is the persisted preference set.
 type Config struct {
-	MidiOut  string `json:"midi_out,omitempty"`
-	MidiIn   string `json:"midi_in,omitempty"`
-	LowerH   int    `json:"lower_h,omitempty"`
-	LastPath string `json:"last_path,omitempty"`
+	LowerH   int              `json:"lower_h,omitempty"`
+	LastPath string           `json:"last_path,omitempty"`
+	Patch    []string         `json:"patch,omitempty"`   // "input>>output" routes
+	Filters  map[string][]int `json:"filters,omitempty"` // output -> passing channels
 }
 
 // appDir returns (and creates) the application's config directory.
@@ -88,13 +87,4 @@ func fileExists(path string) bool {
 	}
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
-}
-
-// realPortName returns the device name, or "" for placeholder names like
-// "<none>" / "<off>" / "<no portmidi>" that should not be persisted.
-func realPortName(s string) string {
-	if strings.HasPrefix(s, "<") {
-		return ""
-	}
-	return s
 }

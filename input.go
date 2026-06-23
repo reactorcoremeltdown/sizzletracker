@@ -30,11 +30,17 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 	r := ev.Rune()
 	mod := ev.Modifiers()
 
-	// Dropdowns: Esc closes them.
-	if k == tcell.KeyEsc && (a.ed.showSig || a.ed.showFile) {
-		a.ed.showSig = false
-		a.ed.showFile = false
-		return true
+	// Dropdowns / menus: Esc closes them.
+	if k == tcell.KeyEsc {
+		if a.ed.chanMenuOut >= 0 {
+			a.ed.chanMenuOut = -1
+			return true
+		}
+		if a.ed.showSig || a.ed.showFile {
+			a.ed.showSig = false
+			a.ed.showFile = false
+			return true
+		}
 	}
 
 	// Modal dialog captures all keys.
@@ -65,6 +71,9 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 			return true
 		case tcell.KeyF3:
 			a.ed.focus = FocusArrange
+			return true
+		case tcell.KeyF4:
+			a.toggleView()
 			return true
 		case tcell.KeyF5:
 			a.toggleArm()
@@ -112,12 +121,61 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 		a.handleBPMKey(k, r)
 	case FocusLen:
 		a.handleLenKey(k, r)
-	case FocusTracker:
-		a.handleTrackerKey(k, r, mod)
-	case FocusArrange:
-		a.handleArrangeKey(k, r, mod)
+	default:
+		if a.ed.view == ViewPatch {
+			a.handlePatchKey(k, r)
+		} else if a.ed.focus == FocusArrange {
+			a.handleArrangeKey(k, r, mod)
+		} else {
+			a.handleTrackerKey(k, r, mod)
+		}
 	}
 	return true
+}
+
+func (a *App) toggleView() {
+	if a.ed.view == ViewEdit {
+		a.ed.view = ViewPatch
+		a.ed.status = "MIDI patchbay (F4 to return)"
+	} else {
+		a.ed.view = ViewEdit
+	}
+	a.ed.chanMenuOut = -1
+}
+
+// handlePatchKey drives the patchbay matrix cursor and connections.
+func (a *App) handlePatchKey(k tcell.Key, r rune) {
+	ni := a.midi.numInputs()
+	no := a.midi.numOutputs()
+	switch k {
+	case tcell.KeyLeft:
+		a.ed.patchIn = clampInt(a.ed.patchIn-1, 0, max(0, ni-1))
+		return
+	case tcell.KeyRight:
+		a.ed.patchIn = clampInt(a.ed.patchIn+1, 0, max(0, ni-1))
+		return
+	case tcell.KeyUp:
+		a.ed.patchOut = clampInt(a.ed.patchOut-1, 0, max(0, no-1))
+		return
+	case tcell.KeyDown:
+		a.ed.patchOut = clampInt(a.ed.patchOut+1, 0, max(0, no-1))
+		return
+	case tcell.KeyEnter:
+		a.midi.toggleRoute(a.ed.patchIn, a.ed.patchOut)
+		return
+	}
+	if k == tcell.KeyRune {
+		switch r {
+		case '*', 'x', '.':
+			a.midi.toggleRoute(a.ed.patchIn, a.ed.patchOut)
+		case 'c':
+			if a.ed.chanMenuOut == a.ed.patchOut {
+				a.ed.chanMenuOut = -1
+			} else {
+				a.ed.chanMenuOut = a.ed.patchOut
+			}
+		}
+	}
 }
 
 // --- text fields ---
@@ -754,9 +812,21 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	if !ok {
 		a.ed.showSig = false
 		a.ed.showFile = false
+		a.ed.chanMenuOut = -1
 		return
 	}
 	right := sPress
+
+	// Channel dropdown is semi-modal: a click off its controls just closes it.
+	if a.ed.chanMenuOut >= 0 {
+		switch reg.action {
+		case ActChanCell, ActChanAll, ActChanNone, ActChanMenu:
+			// handled below; keep the dropdown open
+		default:
+			a.ed.chanMenuOut = -1
+			return
+		}
+	}
 
 	switch reg.action {
 	case ActPlay:
@@ -790,12 +860,28 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		a.ed.showSig = false
 	case ActFileOption:
 		a.fileOption(reg.data1)
-	case ActMidiOut:
-		a.midi.cycleOut()
-		a.ed.status = "MIDI out: " + a.midi.OutName()
-	case ActMidiIn:
-		a.midi.cycleIn()
-		a.ed.status = "MIDI in: " + a.midi.InName()
+	case ActTabEdit:
+		a.ed.view = ViewEdit
+		a.ed.chanMenuOut = -1
+	case ActTabPatch:
+		a.ed.view = ViewPatch
+		a.ed.chanMenuOut = -1
+	case ActPatchCell:
+		a.ed.patchIn = reg.data1
+		a.ed.patchOut = reg.data2
+		a.midi.toggleRoute(reg.data1, reg.data2)
+	case ActChanMenu:
+		if a.ed.chanMenuOut == reg.data1 {
+			a.ed.chanMenuOut = -1
+		} else {
+			a.ed.chanMenuOut = reg.data1
+		}
+	case ActChanCell:
+		a.midi.toggleFilter(reg.data1, reg.data2) // keeps the dropdown open
+	case ActChanAll:
+		a.midi.setFilterAll(reg.data1, true)
+	case ActChanNone:
+		a.midi.setFilterAll(reg.data1, false)
 	case ActAddTrack:
 		a.song.mu.Lock()
 		a.song.Blocks[a.ed.editBlock].addTrack()
