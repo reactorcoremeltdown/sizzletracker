@@ -54,6 +54,9 @@ type App struct {
 
 	// Tracker/piano-roll separator drag state.
 	sepDrag bool
+
+	// quit is set by the File > Exit menu item to end the event loop.
+	quit bool
 }
 
 // frameInterval bounds the UI redraw cadence. The event loop redraws on every
@@ -266,11 +269,13 @@ func (a *App) loop() {
 func (a *App) processEvent(ev tcell.Event) bool {
 	switch ev := ev.(type) {
 	case *tcell.EventKey:
-		return a.handleKey(ev)
+		if !a.handleKey(ev) {
+			return false
+		}
 	case *tcell.EventMouse:
 		a.handleMouse(ev)
 	case *tcell.EventResize:
 		a.screen.Sync()
 	}
-	return true
+	return !a.quit // File > Exit sets a.quit from the mouse handler
 }

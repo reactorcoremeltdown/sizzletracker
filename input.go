@@ -277,6 +277,9 @@ func (a *App) fileOption(i int) {
 		a.openDialog(DlgOpen, "Open project:", a.ed.projPath)
 	case 3: // Export MIDI...
 		a.openDialog(DlgExport, "Export MIDI to:", a.defaultMidiName())
+	case 4: // Exit
+		a.ed.showFile = false
+		a.quit = true
 	}
 }
 

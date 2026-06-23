@@ -842,7 +842,7 @@ func (a *App) drawSigDropdown(fr *frame) {
 }
 
 // fileMenu is the list of File-dropdown options (indices used by ActFileOption).
-var fileMenu = []string{"Save", "Save As...", "Open...", "Export MIDI..."}
+var fileMenu = []string{"Save", "Save As...", "Open...", "Export MIDI...", "Exit"}
 
 func (a *App) drawFileDropdown() {
 	x0 := a.ed.fileX
