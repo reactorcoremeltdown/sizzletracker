@@ -668,9 +668,10 @@ var helpLines = []string{
 	"  Toolbar Add/Remove add/remove a block row (a / D keys)",
 	"  Click a marker to toggle it; right-click to erase.",
 	"",
-	"# Live punch-in",
-	"  Pick 'In:', arm record (F5). While playing, controller",
-	"  note-on/off get recorded at the playhead on the cursor track.",
+	"# Live punch-in (polyphonic)",
+	"  Pick 'In:', arm record (F5). Controller note-on/off record at",
+	"  the playhead. Each held note takes its own track; chords overflow",
+	"  to free tracks and new tracks are created automatically.",
 	"",
 	"  Press any key to close this help.",
 }

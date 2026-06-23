@@ -753,11 +753,34 @@ func (a *App) gotoBlock(delta int) {
 	a.resetCursorToBlock()
 }
 
-// --- live punch-in ---
+// --- live punch-in (polyphonic) ---
 //
-// While armed and playing, note-on writes a note at the playhead on the
-// cursor track and the matching note-off writes a NOTE-OFF event on the same
-// track. While armed and stopped it behaves as a step recorder.
+// Each held incoming note occupies its own track until its note-off. A new
+// note is placed on the first free track (scanning from the cursor, wrapping);
+// if every track is already holding a note a new track is created. While
+// playing, note-on/off are written at the playhead; while stopped it is a
+// chord step-recorder: notes of a chord stack at the cursor tick and the
+// cursor only advances once the whole chord has been released.
+
+// freePunchTrack returns a track to record a new incoming note on: the first
+// track not currently holding a punched note, scanning from the cursor and
+// wrapping. If all tracks are busy it appends a new one. Caller holds song.mu.
+func (a *App) freePunchTrack(blk *Block) int {
+	occupied := make(map[int]bool, len(a.ed.punch))
+	for _, info := range a.ed.punch {
+		occupied[info.track] = true
+	}
+	n := len(blk.Tracks)
+	start := clampInt(a.ed.curTrack, 0, n-1)
+	for off := 0; off < n; off++ {
+		idx := (start + off) % n
+		if !occupied[idx] {
+			return idx
+		}
+	}
+	blk.addTrack()
+	return len(blk.Tracks) - 1
+}
 
 func (a *App) applyPunch(on bool, note, vel int) {
 	if !a.ed.armed {
@@ -767,7 +790,6 @@ func (a *App) applyPunch(on bool, note, vel int) {
 
 	a.song.mu.Lock()
 	blk := a.song.Blocks[a.ed.editBlock]
-	tr := clampInt(a.ed.curTrack, 0, len(blk.Tracks)-1)
 	tick := a.ed.curTick
 	if playing {
 		pb, pt, _ := a.player.playhead()
@@ -777,36 +799,39 @@ func (a *App) applyPunch(on bool, note, vel int) {
 	}
 
 	if on {
+		tr := a.freePunchTrack(blk)
 		if tick >= 0 && tick < blk.Length {
 			st := &blk.Tracks[tr].Steps[tick]
 			st.Note = note
 			st.Vel = vel
 		}
 		a.ed.punch[note] = punchInfo{track: tr, tick: tick}
-	} else {
-		info, known := a.ed.punch[note]
-		offTrack := tr
-		if known {
-			offTrack = info.track
-			delete(a.ed.punch, note)
+		voices := len(a.ed.punch)
+		a.song.mu.Unlock()
+		a.ed.status = fmt.Sprintf("Punched %s vel %d -> T%d (%d voice)", noteName(note), vel, tr+1, voices)
+		return
+	}
+
+	// note-off
+	info, known := a.ed.punch[note]
+	if known {
+		delete(a.ed.punch, note)
+	}
+	if playing && known && info.track >= 0 && info.track < len(blk.Tracks) {
+		offTick := tick
+		if offTick == info.tick {
+			offTick = info.tick + 1 // released within the same tick; keep the note
 		}
-		if playing && offTrack >= 0 && offTrack < len(blk.Tracks) {
-			offTick := tick
-			if known && offTick == info.tick {
-				offTick = info.tick + 1
-			}
-			if offTick >= 0 && offTick < blk.Length {
-				blk.Tracks[offTrack].Steps[offTick].Note = NoteOff
-			}
+		if offTick >= 0 && offTick < blk.Length {
+			blk.Tracks[info.track].Steps[offTick].Note = NoteOff
 		}
 	}
+	chordDone := len(a.ed.punch) == 0
 	a.song.mu.Unlock()
 
-	if on && !playing {
+	// Stopped step-recorder: advance only once the whole chord is released.
+	if !playing && known && chordDone {
 		a.advance()
-	}
-	if on {
-		a.ed.status = fmt.Sprintf("Punched %s vel %d", noteName(note), vel)
 	}
 }
 
