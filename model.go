@@ -16,6 +16,9 @@ const (
 	ValEmpty = -1
 )
 
+// rollBeats is the width of the piano-roll timeline, in beats.
+const rollBeats = 64
+
 // Step is a single cell for one track at one tick. A tracker row.
 type Step struct {
 	Note int // NoteEmpty, NoteOff, or 0..127
@@ -113,159 +116,193 @@ func (b *Block) removeTrack(idx int) {
 	b.Tracks = append(b.Tracks[:idx], b.Tracks[idx+1:]...)
 }
 
-// TimeSig is a musical time signature.
+// TimeSig is a musical time signature. The app supports a fixed set.
 type TimeSig struct {
 	Num int
 	Den int
 }
 
+// timeSigs are the three supported signatures, shown in the dropdown.
+var timeSigs = []TimeSig{{3, 4}, {4, 4}, {5, 4}}
+
 func (ts TimeSig) String() string { return fmt.Sprintf("%d/%d", ts.Num, ts.Den) }
+
+// ticksPerBeat is the number of tracker lines that make up one beat — and the
+// per-signature interlacing granularity: 3 lines/beat for 3/4, 4 for 4/4,
+// 5 for 5/4.
+func (ts TimeSig) ticksPerBeat() int { return ts.Num }
+
+// beatsPerBar is fixed at 4, which yields the required ticks-per-bar of
+// 12 (3/4), 16 (4/4) and 20 (5/4).
+func (ts TimeSig) beatsPerBar() int { return 4 }
+
+// ticksPerBar = ticksPerBeat * beatsPerBar = 12 / 16 / 20.
+func (ts TimeSig) ticksPerBar() int { return ts.ticksPerBeat() * ts.beatsPerBar() }
 
 // Song is the whole document. It is shared between the UI goroutine and the
 // playback goroutine, so every access must hold mu.
+//
+// The arrangement is a piano roll: each Block is a row, and Roll[i] is a lane
+// of beat-markers along the timeline. A marker means "this block plays during
+// that beat"; a contiguous run of markers plays the block's pattern across it.
 type Song struct {
 	mu sync.Mutex
 
-	BPM          float64
-	Sig          TimeSig
-	TicksPerBeat int // tracker rows per beat (e.g. 4 == 16th notes in 4/4)
-
-	Blocks      []*Block // the palette of available patterns
-	Arrangement []int    // sequence of indices into Blocks (the song timeline)
+	BPM    float64
+	Sig    TimeSig
+	Blocks []*Block
+	Roll   [][]bool // Roll[i] is the beat lane for Blocks[i]; len == rollBeats
 }
 
+func newRollRow() []bool { return make([]bool, rollBeats) }
+
+func blockName(n int) string { return string(rune('A' + n%26)) }
+
 func newSong() *Song {
-	s := &Song{
-		BPM:          120,
-		Sig:          TimeSig{4, 4},
-		TicksPerBeat: 4,
-	}
+	s := &Song{BPM: 120, Sig: TimeSig{4, 4}}
+	bar := s.ticksPerBar() // 16
 	s.Blocks = []*Block{
-		newBlock("A", 16, 4),
-		newBlock("B", 16, 4),
+		newBlock("A", bar, 4),
+		newBlock("B", bar, 4),
 	}
-	s.Arrangement = []int{0, 1}
+	s.Roll = [][]bool{newRollRow(), newRollRow()}
+	// Demo: A plays the first bar (beats 0-3), B plays the second (beats 4-7).
+	for i := 0; i < 4; i++ {
+		s.Roll[0][i] = true
+		s.Roll[1][4+i] = true
+	}
 	return s
 }
 
-// ticksPerBar returns how many tracker rows make up one bar.
-func (s *Song) ticksPerBar() int {
-	return s.TicksPerBeat * s.Sig.Num
-}
+func (s *Song) ticksPerBeat() int { return s.Sig.ticksPerBeat() }
+func (s *Song) ticksPerBar() int  { return s.Sig.ticksPerBar() }
 
 // secondsPerTick is the wall-clock duration of one tracker row.
 func (s *Song) secondsPerTick() float64 {
-	return 60.0 / s.BPM / float64(s.TicksPerBeat)
+	return 60.0 / s.BPM / float64(s.ticksPerBeat())
 }
 
-// totalTicks is the number of ticks in one pass through the arrangement
-// (i.e. the song length without any looping/repeat).
-func (s *Song) totalTicks() int {
-	t := 0
-	for _, bi := range s.Arrangement {
-		if bi >= 0 && bi < len(s.Blocks) {
-			t += s.Blocks[bi].Length
+// blockBeats is how many beats Block i spans on the roll.
+func (s *Song) blockBeats(i int) int {
+	if i < 0 || i >= len(s.Blocks) {
+		return 1
+	}
+	bb := s.Blocks[i].Length / s.ticksPerBeat()
+	if bb < 1 {
+		bb = 1
+	}
+	return bb
+}
+
+// totalBeats is the furthest marked beat + 1 (song length, no repeat).
+func (s *Song) totalBeats() int {
+	last := -1
+	for _, row := range s.Roll {
+		for b := len(row) - 1; b >= 0; b-- {
+			if row[b] {
+				if b > last {
+					last = b
+				}
+				break
+			}
 		}
 	}
-	return t
+	return last + 1
 }
 
-// addBlock creates a fresh block modelled on the dimensions of an existing one
-// and returns its index.
-func (s *Song) addBlock(length, numTracks int) int {
-	name := string(rune('A' + len(s.Blocks)%26))
-	s.Blocks = append(s.Blocks, newBlock(name, length, numTracks))
-	return len(s.Blocks) - 1
+// totalTicks is the song length in ticks (one pass, no repeat).
+func (s *Song) totalTicks() int { return s.totalBeats() * s.ticksPerBeat() }
+
+// --- block list editing (kept in sync with Roll rows) ---
+
+// addBlockAt inserts a fresh one-bar block immediately below index i and
+// returns the new block's index.
+func (s *Song) addBlockAt(i int) int {
+	at := i + 1
+	if at < 0 {
+		at = 0
+	}
+	if at > len(s.Blocks) {
+		at = len(s.Blocks)
+	}
+	b := newBlock(blockName(len(s.Blocks)), s.ticksPerBar(), 4)
+	s.Blocks = append(s.Blocks, nil)
+	copy(s.Blocks[at+1:], s.Blocks[at:])
+	s.Blocks[at] = b
+
+	s.Roll = append(s.Roll, nil)
+	copy(s.Roll[at+1:], s.Roll[at:])
+	s.Roll[at] = newRollRow()
+	return at
 }
 
-// duplicateBlock copies block i and returns the new index.
-func (s *Song) duplicateBlock(i int) int {
+// duplicateBlockAt clones block i (with its roll lane) just below it.
+func (s *Song) duplicateBlockAt(i int) int {
 	if i < 0 || i >= len(s.Blocks) {
 		return i
 	}
-	s.Blocks = append(s.Blocks, s.Blocks[i].clone())
-	return len(s.Blocks) - 1
+	at := i + 1
+	clone := s.Blocks[i].clone()
+	row := append([]bool(nil), s.Roll[i]...)
+
+	s.Blocks = append(s.Blocks, nil)
+	copy(s.Blocks[at+1:], s.Blocks[at:])
+	s.Blocks[at] = clone
+
+	s.Roll = append(s.Roll, nil)
+	copy(s.Roll[at+1:], s.Roll[at:])
+	s.Roll[at] = row
+	return at
 }
 
-// removeBlock deletes block i and rewrites the arrangement so references stay
-// valid (slots pointing at the removed block are dropped).
-func (s *Song) removeBlock(i int) {
+// removeBlockAt deletes block i and its roll lane.
+func (s *Song) removeBlockAt(i int) {
 	if i < 0 || i >= len(s.Blocks) || len(s.Blocks) <= 1 {
 		return
 	}
 	s.Blocks = append(s.Blocks[:i], s.Blocks[i+1:]...)
-	var arr []int
-	for _, b := range s.Arrangement {
-		switch {
-		case b == i:
-			// drop the slot entirely
-		case b > i:
-			arr = append(arr, b-1)
-		default:
-			arr = append(arr, b)
-		}
-	}
-	s.Arrangement = arr
+	s.Roll = append(s.Roll[:i], s.Roll[i+1:]...)
 }
 
-// --- Arrangement editing helpers ---
-
-func (s *Song) arrInsert(at, blockIdx int) {
-	if at < 0 {
-		at = 0
-	}
-	if at > len(s.Arrangement) {
-		at = len(s.Arrangement)
-	}
-	s.Arrangement = append(s.Arrangement, 0)
-	copy(s.Arrangement[at+1:], s.Arrangement[at:])
-	s.Arrangement[at] = blockIdx
-}
-
-func (s *Song) arrDelete(from, to int) {
-	from, to = clampRange(from, to, len(s.Arrangement))
-	if from < 0 {
+// setSig changes the time signature, rescaling every block so it keeps the
+// same number of bars under the new ticks-per-bar.
+func (s *Song) setSig(ns TimeSig) {
+	old := s.ticksPerBar()
+	s.Sig = ns
+	nbar := s.ticksPerBar()
+	if old <= 0 || nbar <= 0 {
 		return
 	}
-	s.Arrangement = append(s.Arrangement[:from], s.Arrangement[to+1:]...)
+	for _, b := range s.Blocks {
+		bars := (b.Length + old/2) / old
+		if bars < 1 {
+			bars = 1
+		}
+		b.setLength(bars * nbar)
+	}
 }
 
-// arrMove shifts the slot range [from,to] by delta positions.
-func (s *Song) arrMove(from, to, delta int) (newFrom, newTo int) {
-	from, to = clampRange(from, to, len(s.Arrangement))
-	if from < 0 {
-		return from, to
-	}
-	dst := from + delta
-	if dst < 0 || dst+(to-from) >= len(s.Arrangement) {
-		return from, to
-	}
-	seg := make([]int, to-from+1)
-	copy(seg, s.Arrangement[from:to+1])
-	rest := append([]int{}, s.Arrangement[:from]...)
-	rest = append(rest, s.Arrangement[to+1:]...)
-	out := make([]int, 0, len(s.Arrangement))
-	out = append(out, rest[:dst]...)
-	out = append(out, seg...)
-	out = append(out, rest[dst:]...)
-	s.Arrangement = out
-	return dst, dst + (to - from)
+// --- roll marker helpers (caller holds s.mu) ---
+
+func (s *Song) rollGet(row, beat int) bool {
+	return row >= 0 && row < len(s.Roll) &&
+		beat >= 0 && beat < len(s.Roll[row]) && s.Roll[row][beat]
 }
 
-func clampRange(a, b, n int) (int, int) {
-	if a > b {
-		a, b = b, a
+func (s *Song) rollSet(row, beat int, v bool) {
+	if row >= 0 && row < len(s.Roll) && beat >= 0 && beat < len(s.Roll[row]) {
+		s.Roll[row][beat] = v
 	}
-	if a < 0 {
-		a = 0
+}
+
+// rollPaint marks a whole block-length run of beats starting at start.
+func (s *Song) rollPaint(row, start int) {
+	if row < 0 || row >= len(s.Roll) {
+		return
 	}
-	if b >= n {
-		b = n - 1
+	for k := 0; k < s.blockBeats(row); k++ {
+		s.rollSet(row, start+k, true)
 	}
-	if n == 0 || a > b {
-		return -1, -1
-	}
-	return a, b
 }
 
 // noteName renders a MIDI note (or sentinel) as a 3-char tracker cell.

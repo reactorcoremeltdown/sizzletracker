@@ -37,18 +37,16 @@ type App struct {
 	midiIn chan inEvent
 	events chan tcell.Event
 
-	// Mouse press / double-click tracking. tcell delivers raw button-state
-	// events, so we detect transitions and time-based double-clicks here.
-	prevBtn      tcell.ButtonMask
-	lastClickAt  time.Time
-	lastClickX   int
-	lastClickY   int
-	lastClickBtn tcell.ButtonMask
-}
+	// Previous mouse button mask, for detecting press/drag/release transitions
+	// (tcell delivers raw button-state snapshots).
+	prevBtn tcell.ButtonMask
 
-// dblClickWindow is how close in time two clicks at the same cell must be to
-// count as a double-click.
-const dblClickWindow = 400 * time.Millisecond
+	// Piano-roll drag-select state.
+	rollDrag  bool
+	dragRow   int
+	dragBeat  int
+	dragMoved bool
+}
 
 // frameInterval bounds the UI redraw cadence. The event loop redraws on every
 // event and on each tick of this interval, so the playhead keeps moving on
@@ -74,7 +72,7 @@ func run() error {
 
 	initStyles()
 	screen.SetStyle(styNormal)
-	screen.EnableMouse(tcell.MouseButtonEvents)
+	screen.EnableMouse(tcell.MouseDragEvents) // button + drag (for roll selection)
 	screen.HideCursor()
 	screen.Clear()
 

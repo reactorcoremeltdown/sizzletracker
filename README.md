@@ -25,25 +25,28 @@ ncurses, with live pattern editing for MIDI "looping".
 
 * **Tracker (upper half).** A vertical pattern editor for the currently
   selected *block*. Each row is a tick; playback scans rows top to bottom.
-  Rows are interlaced and **beats / bars are highlighted** (bar rows bold
-  yellow, beat rows cyan). Each track has three columns:
+  Rows are interlaced and **beats / bars are highlighted**. The number of
+  lines per beat follows the time signature — **3 for 3/4, 4 for 4/4, 5 for
+  5/4** — so a bar is 12 / 16 / 20 lines. Each track has three columns:
   **note (+octave)**, **velocity** (hex), and **MIDI channel**.
   Tracks are unlimited — add/remove with the `+trk` / `-trk` controls; the
-  grid scrolls horizontally. The tracker takes all vertical space left by the
-  fixed-height arrangement segment and **scrolls vertically** when the block
-  is taller than the screen (following the playhead during playback).
-* **Adjustable block length.** A controls row exposes `len - [ N ] +`:
-  `-` halves and `+` doubles the number of lines, and clicking the number
-  lets you type an arbitrary length. All tracks in the block resize together.
-* **Arrangement (lower half).** A fixed-height step sequencer where each slot
-  references a block (a whole set of tracks), with a toolbar —
-  **Add / Remove / Cut / Copy / Paste** — plus select, move, insert, and
-  create / duplicate / remove blocks. A **song-time** readout (`time
-  elapsed / total`, computed for one pass with no repeat) and the live
-  **playhead position** (`arr i/n · row`) are shown here.
-* **Transport in the top bar** with glyph buttons — `|>` play/stop, `[]`
-  stop, `()` record-arm, `<>`/`@@` loop song/block, `!!` panic — plus an
-  editable **BPM** field, a clickable **time-signature** cycle, and **MIDI
+  grid scrolls horizontally, and vertically when the block is taller than the
+  screen (following the playhead during playback).
+* **Adjustable block length** in bar-sized steps. `len - [ N ] +`: `-` halves
+  and `+` doubles the number of lines (12 / 24 / 48 for 3/4, 16 / 32 / 64 for
+  4/4, 20 / 40 / 80 for 5/4), and clicking the number lets you type a length.
+* **Piano roll (lower half).** A fixed-height 2D arrangement: each **row is a
+  block**, each **column is a beat**, and a **marker** means the block plays
+  that beat. Placing a block paints a whole bar's worth of markers; you can
+  erase individual beats. The playhead scans **left → right**. Blocks
+  interlace vertically and bars interlace horizontally (gridlines every 4
+  beats). **Cut / Copy / Paste** act on a rectangular marker selection (drag
+  or shift+arrows to select; paste lands with its top-left at the cursor).
+  **Add / Remove** add a block row below / remove the selected one. A
+  song-time and bar-count readout is shown on the toolbar.
+* **Transport in the top bar** with glyph buttons — `▶` play, `■` stop,
+  `●` record-arm, `⟲`/`⟳` loop song/block, `⚠` panic — plus an editable
+  **BPM** field, a **time-signature dropdown** (3/4, 4/4, 5/4), and **MIDI
   output / input** selectors.
 * **F1 help overlay** listing every hotkey; any key or click dismisses it.
 * **Live editing while playing.** Edits to the model are picked up by the
@@ -57,9 +60,9 @@ ncurses, with live pattern editing for MIDI "looping".
   the key. When **stopped** it acts as a step recorder (note-on writes and
   advances). A note sounds until a note-off (or a retrigger) on its track.
 * **Mouse support** throughout: click transport buttons, click a tracker
-  cell to move the cursor, right-click a cell to clear it, click arrangement
-  slots (shift-click to extend a selection, double-click to jump to editing
-  that block), click palette blocks to select/insert.
+  cell to move the cursor, right-click a cell to clear it; in the piano roll,
+  click a marker to toggle it, right-click to erase, and **drag to select** a
+  region of markers. Click a block row's label to edit it in the tracker.
 
 ## Build
 
@@ -140,28 +143,29 @@ Tracker focus:
 controls row also has `<` / `>` buttons mirroring `[` / `]` for block
 navigation.)
 
-Arrangement focus (toolbar buttons: **Add Remove Cut Copy Paste**):
+Piano-roll focus (toolbar buttons: **Add Remove Cut Copy Paste**):
 
 | Key | Action |
 |-----|--------|
-| ←/→ | Move slot cursor |
-| `Shift`+←/→ | Extend selection |
-| ↑/↓ | Cycle the block referenced by the slot |
-| `Enter` | Jump to editing the slot's block |
-| `i` / `Ins` | Insert current block at cursor |
-| `a` | Append current block |
-| `x` / `Del` | Delete slot(s) |
-| `c` / `v` | Copy / paste selection |
-| `,` `.` (or `<` `>`) | Move selection left / right |
-| `n` | New block (added to palette) |
-| `d` | Duplicate current block |
-| `D` | Remove current block from palette |
+| Arrows | Move the cursor (row = block, column = beat) |
+| `Shift`+Arrows | Extend the rectangular selection |
+| `Enter` / `p` | Place block (paint a bar-length run of markers) |
+| `.` | Toggle a single beat marker |
+| `Del` / `Backspace` | Erase markers (cursor or selection) |
+| `c` / `x` / `v` | Copy / cut / paste markers (paste top-left at cursor) |
+| `a` | Add a block row below |
+| `d` | Duplicate the current block |
+| `D` | Remove the current block |
+
+Time signature is chosen from a **dropdown** — click the `Sig:` field in the
+top bar and pick 3/4, 4/4 or 5/4 (`Esc` closes it). Changing it rescales every
+block to keep its bar count.
 
 ## Architecture
 
 | File | Responsibility |
 |------|----------------|
-| `model.go` | Data model: `Song` → `Block` → `Track` → `Step`, plus arrangement edits. Guarded by `Song.mu`. |
+| `model.go` | Data model: `Song` → `Block` → `Track` → `Step`, the piano-roll `Roll` grid, and time-signature tick math. Guarded by `Song.mu`. |
 | `midi.go` | PortMidi output/input wrapper (port selection, note on/off, punch-in listener). |
 | `internal/portmidi/` | Vendored PortMidi cgo binding with platform-aware build flags. |
 | `player.go` | Timing goroutine; each tick it *collects* note events under lock and emits MIDI after releasing the lock, so playback timing is unaffected by rendering or input. |

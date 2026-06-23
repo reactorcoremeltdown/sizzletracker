@@ -5,7 +5,7 @@ type Focus int
 
 const (
 	FocusTracker Focus = iota // upper half: editing the steps of a block
-	FocusArrange              // lower half: arranging blocks into a song
+	FocusArrange              // lower half: the piano roll
 	FocusBPM                  // editing the BPM text field in the top bar
 	FocusLen                  // editing the block-length text field
 )
@@ -29,12 +29,11 @@ const (
 	ActLoopMode
 	ActPanic
 	ActBPM
-	ActTimeSig
+	ActTimeSig   // open the time-signature dropdown
+	ActSigOption // data1=index into timeSigs
 	ActMidiOut
 	ActMidiIn
 	ActTrackerCell // data1=track, data2=tick, data3=column
-	ActArrSlot     // data1=arrangement index
-	ActBlockPick   // data1=block index (palette)
 	ActAddTrack
 	ActDelTrack  // data1=track index to delete
 	ActBlockPrev // edit previous block
@@ -42,12 +41,14 @@ const (
 	ActLenHalf   // halve block length
 	ActLenDouble // double block length
 	ActLenField  // edit block length text field
-	// Lower-segment toolbar (arrangement block ops).
-	ActArrAdd
-	ActArrRemove
-	ActArrCut
-	ActArrCopy
-	ActArrPaste
+	// Piano-roll toolbar + grid.
+	ActBlockAdd    // add a block below the selected one
+	ActBlockRemove // remove the selected block
+	ActMarkCut     // cut the marker selection
+	ActMarkCopy    // copy the marker selection
+	ActMarkPaste   // paste markers at the cursor
+	ActRollCell    // data1=block row, data2=beat
+	ActRollLabel   // data1=block row (select for editing)
 )
 
 // Region is a hit-testable rectangle produced during drawing.
@@ -65,7 +66,8 @@ func (r Region) hit(x, y int) bool {
 type Editor struct {
 	focus Focus
 
-	// Tracker cursor (which block we edit, and the cell within it).
+	// Tracker cursor (which block we edit, and the cell within it). editBlock
+	// doubles as the piano-roll row cursor.
 	editBlock int
 	curTrack  int
 	curTick   int
@@ -74,35 +76,34 @@ type Editor struct {
 	step      int // cursor advance amount after entering a note
 	follow    bool
 
-	// Arrangement cursor + selection.
-	arrCursor int
+	// Piano-roll cursor + rectangular selection. The cursor corner is
+	// (editBlock, rollBeat); the anchor is (selRow, selBeat) when selActive.
+	rollBeat  int
 	selActive bool
-	selAnchor int
+	selRow    int
+	selBeat   int
 
-	// Block palette cursor (which block "new from here" / pick uses).
-	paletteCursor int
-
-	// Clipboards.
-	arrClip   []int
-	blockClip *Block
+	// Marker clipboard (rectangle of beat-markers).
+	markClip [][]bool
 
 	// Recording / punch-in.
 	armed bool
-	// punch tracks currently-held MIDI input notes so a note-off can be
-	// written on the same track (and after) the matching note-on.
 	punch map[int]punchInfo
 
-	// Modal help overlay.
+	// Modal overlays.
 	showHelp bool
+	showSig  bool
+	sigX     int // x of the Sig field (so the dropdown can align under it)
 
-	// Top-bar BPM text field editing buffer.
+	// Text-field editing buffers.
 	bpmBuf string
-	// Block-length text field editing buffer.
 	lenBuf string
 
-	// Layout bookkeeping for scrolling.
-	trackScroll int // first visible track index (horizontal)
-	tickScroll  int // first visible tick (vertical)
+	// Scroll bookkeeping.
+	trackScroll    int // first visible track (tracker, horizontal)
+	tickScroll     int // first visible tick (tracker, vertical)
+	rollBeatScroll int // first visible beat (roll, horizontal)
+	rollRowScroll  int // first visible block (roll, vertical)
 
 	// Collected each frame for mouse hit-testing.
 	regions []Region
@@ -141,14 +142,21 @@ func (e *Editor) hitTest(x, y int) (Region, bool) {
 	return Region{}, false
 }
 
-// selRange returns the inclusive arrangement selection range, or the cursor.
-func (e *Editor) selRange() (int, int) {
-	if !e.selActive {
-		return e.arrCursor, e.arrCursor
+// rollSelRect returns the inclusive selection rectangle (rows r0..r1, beats
+// b0..b1). With no active selection it is just the cursor cell.
+func (e *Editor) rollSelRect() (r0, b0, r1, b1 int) {
+	r0, r1 = e.editBlock, e.editBlock
+	b0, b1 = e.rollBeat, e.rollBeat
+	if e.selActive {
+		r0, r1 = minMaxInt(e.selRow, e.editBlock)
+		b0, b1 = minMaxInt(e.selBeat, e.rollBeat)
 	}
-	a, b := e.selAnchor, e.arrCursor
+	return
+}
+
+func minMaxInt(a, b int) (int, int) {
 	if a > b {
-		a, b = b, a
+		return b, a
 	}
 	return a, b
 }

@@ -32,6 +32,8 @@ var (
 	stySel      tcell.Style
 	styDim      tcell.Style
 	styAccent   tcell.Style
+	styRollOdd  tcell.Style // faint background for odd piano-roll rows
+	styRollBar  tcell.Style // bar gridline in the piano roll
 )
 
 func initStyles() {
@@ -48,6 +50,8 @@ func initStyles() {
 	stySel = def.Background(tcell.ColorYellow).Foreground(tcell.ColorBlack)
 	styDim = def.Dim(true)
 	styAccent = def.Foreground(tcell.ColorFuchsia).Bold(true)
+	styRollOdd = def.Background(tcell.NewRGBColor(38, 38, 46))
+	styRollBar = def.Foreground(tcell.ColorGray)
 }
 
 // put writes s at (y, x) with the given style. tcell's PutStrStyled walks
@@ -109,21 +113,25 @@ type blockView struct {
 }
 
 type frame struct {
-	bpm float64
-	sig TimeSig
-	tpb int
+	bpm   float64
+	sig   TimeSig
+	tpb   int // ticks per beat (3/4/5)
+	tpbar int // ticks per bar (12/16/20)
+	bpbar int // beats per bar (4)
 
 	numBlocks  int
 	blockNames []string
-	blockLens  []int
-	arrange    []int
+	blockBeats []int
+	roll       [][]bool
 
 	edit blockView
 
-	playBlk, playTick, arrPos int
-	playing                   bool
-	loop                      LoopMode
+	playBeat          int
+	playBlk, playTick int
+	playing           bool
+	loop              LoopMode
 
+	songBeats    int
 	songTicks    int
 	elapsedTicks int
 	spt          float64
@@ -143,15 +151,18 @@ func (a *App) snapshot() *frame {
 	fr := &frame{
 		bpm:       s.BPM,
 		sig:       s.Sig,
-		tpb:       s.TicksPerBeat,
+		tpb:       s.ticksPerBeat(),
+		tpbar:     s.ticksPerBar(),
+		bpbar:     s.Sig.beatsPerBar(),
 		numBlocks: len(s.Blocks),
-		arrange:   append([]int(nil), s.Arrangement...),
+		songBeats: s.totalBeats(),
 		songTicks: s.totalTicks(),
 		spt:       s.secondsPerTick(),
 	}
-	for _, b := range s.Blocks {
+	for i, b := range s.Blocks {
 		fr.blockNames = append(fr.blockNames, b.Name)
-		fr.blockLens = append(fr.blockLens, b.Length)
+		fr.blockBeats = append(fr.blockBeats, s.blockBeats(i))
+		fr.roll = append(fr.roll, append([]bool(nil), s.Roll[i]...))
 	}
 	blk := s.Blocks[a.ed.editBlock]
 	ev := blockView{name: blk.Name, length: blk.Length}
@@ -165,17 +176,10 @@ func (a *App) snapshot() *frame {
 	fr.edit = ev
 	s.mu.Unlock()
 
-	fr.playBlk, fr.playTick, fr.arrPos, fr.playing, fr.loop = a.player.state()
-
+	fr.playBeat, fr.playBlk, fr.playTick, fr.playing, fr.loop = a.player.state()
 	if fr.playing {
 		if fr.loop == LoopSong {
-			for i := 0; i < fr.arrPos && i < len(fr.arrange); i++ {
-				bi := fr.arrange[i]
-				if bi >= 0 && bi < len(fr.blockLens) {
-					fr.elapsedTicks += fr.blockLens[bi]
-				}
-			}
-			fr.elapsedTicks += fr.playTick
+			fr.elapsedTicks = fr.playBeat * fr.tpb
 		} else {
 			fr.elapsedTicks = fr.playTick
 		}
@@ -210,9 +214,12 @@ func (a *App) draw() {
 
 	a.drawTopBar(0, w, fr)
 	a.drawTracker(trackerY, trackerH, w, fr)
-	a.drawArrange(arrangeY, lowerH, w, fr)
+	a.drawPianoRoll(arrangeY, lowerH, w, fr)
 	a.drawStatus(h-1, w)
 
+	if a.ed.showSig {
+		a.drawSigDropdown(fr)
+	}
 	if a.ed.showHelp {
 		a.drawHelp(h, w)
 	}
@@ -278,8 +285,13 @@ func (a *App) drawTopBar(y, w int, fr *frame) {
 	}
 	x = a.putRegion(y, x, lbl, bpmSty, ActBPM)
 
-	sigTxt := " Sig:" + fr.sig.String() + " "
-	x = a.putRegion(y, x, sigTxt, styBtn, ActTimeSig)
+	a.ed.sigX = x
+	sigSty := styBtn
+	if a.ed.showSig {
+		sigSty = styBtnOn
+	}
+	sigTxt := " Sig:" + fr.sig.String() + " v "
+	x = a.putRegion(y, x, sigTxt, sigSty, ActTimeSig)
 
 	out := " Out:" + trunc(a.midi.OutName(), 16) + " "
 	x = a.putRegion(y, x, out, styBtn, ActMidiOut)
@@ -343,7 +355,7 @@ func (a *App) drawTracker(top, height, w int, fr *frame) {
 	a.computeTickScroll(be.length, stepsH, fr)
 	first := a.ed.tickScroll
 
-	tpbar := a.songTicksPerBar(fr)
+	tpbar := fr.tpbar
 	for row := 0; row < stepsH; row++ {
 		tick := first + row
 		y := stepsTop + row
@@ -404,14 +416,6 @@ func (a *App) drawTracker(top, height, w int, fr *frame) {
 			}
 		}
 	}
-}
-
-func (a *App) songTicksPerBar(fr *frame) int {
-	n := fr.tpb * fr.sig.Num
-	if n < 1 {
-		return 1
-	}
-	return n
 }
 
 func (a *App) computeTickScroll(length, stepsH int, fr *frame) {
@@ -476,103 +480,154 @@ func (a *App) drawTrackerControls(y, w int, fr *frame) {
 	}
 }
 
-// --- Arrangement (lower) -------------------------------------------------
+// --- Piano roll (lower) ------------------------------------------------
+//
+// Each row is a block; columns are beats along the song timeline. A marker
+// means the block plays that beat. Blocks interlace vertically (alternating
+// row tint) and bars interlace horizontally (a gridline every beatsPerBar).
 
-func (a *App) drawArrange(top, height, w int, fr *frame) {
+func (a *App) drawPianoRoll(top, height, w int, fr *frame) {
 	if height < 2 {
 		return
 	}
-	a.drawArrangeToolbar(top, w, fr)
+	a.drawRollToolbar(top, w, fr)
 
-	labelY := top + 1
-	focusTag := ""
-	if a.ed.focus == FocusArrange {
-		focusTag = "*"
+	const gut = 6
+	gridX := gut
+	visBeats := w - gridX
+	if visBeats < 1 {
+		visBeats = 1
 	}
-	a.put(labelY, 0, "ARR"+focusTag, styAccent)
+	laneTop := top + 2
+	laneRows := height - 2
+	if laneRows < 1 {
+		laneRows = 1
+	}
 
-	px := 5
-	for i, name := range fr.blockNames {
-		lbl := fmt.Sprintf("[%s]", name)
-		sty := styBtn
-		if i == a.ed.editBlock {
-			sty = styBtnOn
-		}
-		lw := cellWidth(lbl)
-		if px+lw > w-22 {
-			a.put(labelY, px, ">", styDim)
+	a.ed.rollBeat = clampInt(a.ed.rollBeat, 0, rollBeats-1)
+
+	// Vertical scroll (blocks) and horizontal scroll (beats).
+	if a.ed.editBlock < a.ed.rollRowScroll {
+		a.ed.rollRowScroll = a.ed.editBlock
+	}
+	if a.ed.editBlock >= a.ed.rollRowScroll+laneRows {
+		a.ed.rollRowScroll = a.ed.editBlock - laneRows + 1
+	}
+	a.ed.rollRowScroll = clampInt(a.ed.rollRowScroll, 0, max(0, fr.numBlocks-laneRows))
+	if a.ed.rollBeat < a.ed.rollBeatScroll {
+		a.ed.rollBeatScroll = a.ed.rollBeat
+	}
+	if a.ed.rollBeat >= a.ed.rollBeatScroll+visBeats {
+		a.ed.rollBeatScroll = a.ed.rollBeat - visBeats + 1
+	}
+	a.ed.rollBeatScroll = clampInt(a.ed.rollBeatScroll, 0, max(0, rollBeats-visBeats))
+
+	a.drawRollRuler(top+1, gridX, visBeats, fr)
+
+	bpb := fr.bpbar
+	r0, b0, r1, b1 := a.ed.rollSelRect()
+	focused := a.ed.focus == FocusArrange
+
+	for r := 0; r < laneRows; r++ {
+		row := a.ed.rollRowScroll + r
+		if row >= fr.numBlocks {
 			break
 		}
-		a.put(labelY, px, lbl, sty)
-		a.ed.addRegion(Region{x: px, y: labelY, w: lw, h: 1, action: ActBlockPick, data1: i})
-		px += lw + 1
-	}
+		y := laneTop + r
 
-	pos := fmt.Sprintf("arr %d/%d  row %d", fr.arrPos+1, len(fr.arrange), fr.playTick)
-	pw := cellWidth(pos)
-	if px < w-pw-1 {
-		a.put(labelY, w-pw-1, pos, styDim)
-	}
+		lblSty := styBtn
+		if row == a.ed.editBlock {
+			lblSty = styBtnOn
+		}
+		a.put(y, 0, fmt.Sprintf("%-*.*s", gut-1, gut-1, fr.blockNames[row]), lblSty)
+		a.ed.addRegion(Region{x: 0, y: y, w: gut - 1, h: 1, action: ActRollLabel, data1: row})
 
-	a.ed.arrCursor = clampInt(a.ed.arrCursor, 0, max(0, len(fr.arrange)-1))
-	selLo, selHi := a.ed.selRange()
-	slotW := 6
-	perRow := (w - 2) / slotW
-	if perRow < 1 {
-		perRow = 1
-	}
-	gridTop := top + 2
-	rows := height - 2
+		rowOdd := row%2 == 1
+		for c := 0; c < visBeats; c++ {
+			beat := a.ed.rollBeatScroll + c
+			if beat >= rollBeats {
+				break
+			}
+			x := gridX + c
+			marked := beat < len(fr.roll[row]) && fr.roll[row][beat]
 
-	playArr := -1
-	if fr.playing && fr.loop == LoopSong {
-		playArr = fr.arrPos
-	}
-
-	for i, bi := range fr.arrange {
-		r := i / perRow
-		c := i % perRow
-		if r >= rows {
-			break
+			ch := "."
+			sty := styNormal
+			if rowOdd {
+				sty = styRollOdd
+			}
+			if beat%bpb == 0 && !marked { // bar gridline on empty cells
+				ch = ":"
+				sty = styRollBar
+			}
+			if marked {
+				ch = "#"
+				sty = styBtnOn
+			}
+			if a.ed.selActive && row >= r0 && row <= r1 && beat >= b0 && beat <= b1 {
+				sty = stySel
+				if !marked {
+					ch = " "
+				}
+			}
+			if fr.playing && fr.loop == LoopSong && beat == fr.playBeat {
+				sty = styPlayhead
+				if !marked {
+					ch = "|"
+				}
+			}
+			if focused && row == a.ed.editBlock && beat == a.ed.rollBeat {
+				sty = styCursor
+			}
+			a.put(y, x, ch, sty)
+			a.ed.addRegion(Region{x: x, y: y, w: 1, h: 1, action: ActRollCell, data1: row, data2: beat})
 		}
-		x := 1 + c*slotW
-		yy := gridTop + r
-		name := "?"
-		if bi >= 0 && bi < len(fr.blockNames) {
-			name = fr.blockNames[bi]
-		}
-		txt := fmt.Sprintf("%-*.*s", slotW-1, slotW-1, fmt.Sprintf("%02d:%s", i, name))
-
-		sty := styNormal
-		if a.ed.selActive && i >= selLo && i <= selHi {
-			sty = stySel
-		}
-		if i == a.ed.arrCursor && a.ed.focus == FocusArrange {
-			sty = styCursor
-		}
-		if i == playArr {
-			sty = styPlayhead
-		}
-		a.put(yy, x, txt, sty)
-		a.ed.addRegion(Region{x: x, y: yy, w: slotW - 1, h: 1, action: ActArrSlot, data1: i})
 	}
 }
 
-func (a *App) drawArrangeToolbar(y, w int, fr *frame) {
+func (a *App) drawRollRuler(y, gridX, visBeats int, fr *frame) {
+	a.put(y, 0, "bar", styDim)
+	bpb := fr.bpbar
+	for c := 0; c < visBeats; c++ {
+		beat := a.ed.rollBeatScroll + c
+		if beat%bpb == 0 {
+			a.put(y, gridX+c, fmt.Sprintf("%d", beat/bpb+1), styDim)
+		}
+	}
+}
+
+func (a *App) drawRollToolbar(y, w int, fr *frame) {
 	a.fill(y, 0, w, ' ', styHeader)
 	x := 1
-	x = a.button(y, x, "Add", false, ActArrAdd)
-	x = a.button(y, x, "Remove", false, ActArrRemove)
-	x = a.button(y, x, "Cut", false, ActArrCut)
-	x = a.button(y, x, "Copy", false, ActArrCopy)
-	x = a.button(y, x, "Paste", false, ActArrPaste)
+	a.put(y, x, "ROLL", styHeader.Bold(true))
+	x += 5
+	x = a.button(y, x, "Add", false, ActBlockAdd)
+	x = a.button(y, x, "Remove", false, ActBlockRemove)
+	x = a.button(y, x, "Cut", false, ActMarkCut)
+	x = a.button(y, x, "Copy", false, ActMarkCopy)
+	x = a.button(y, x, "Paste", false, ActMarkPaste)
 
 	cur := formatClock(float64(fr.elapsedTicks) * fr.spt)
 	total := formatClock(float64(fr.songTicks) * fr.spt)
-	clk := fmt.Sprintf(" time %s / %s ", cur, total)
+	clk := fmt.Sprintf(" %s/%s  %d bars ", cur, total, (fr.songBeats+fr.bpbar-1)/fr.bpbar)
 	cw := cellWidth(clk)
 	if x < w-cw-1 {
 		a.put(y, w-cw-1, clk, styHeader.Bold(true))
+	}
+}
+
+// drawSigDropdown renders the time-signature menu under the Sig field.
+func (a *App) drawSigDropdown(fr *frame) {
+	x0 := a.ed.sigX
+	for i, ts := range timeSigs {
+		lbl := fmt.Sprintf(" %-3s ", ts.String())
+		sty := styBtn
+		if ts == fr.sig {
+			sty = styBtnOn
+		}
+		y := 1 + i
+		a.put(y, x0, lbl, sty)
+		a.ed.addRegion(Region{x: x0, y: y, w: cellWidth(lbl), h: 1, action: ActSigOption, data1: i})
 	}
 }
 
@@ -606,12 +661,12 @@ var helpLines = []string{
 	"  - / = octave   +trk / -trk add/delete track",
 	"  Tall blocks scroll to keep the cursor / playhead in view.",
 	"",
-	"# Arrangement (lower half) - fixed-height segment",
-	"  Toolbar: Add   Remove   Cut   Copy   Paste",
-	"  Left/Right move   Shift+L/R select   Up/Down cycle block",
-	"  Enter edit   i insert   a append   x delete   c copy   v paste",
-	"  , / . move selection   n new   d duplicate   D remove block",
-	"  Song time / position shown in this pane.",
+	"# Piano roll (lower half) - rows are blocks, columns are beats",
+	"  Arrows move cursor   Shift+arrows or drag select a region",
+	"  Enter place block (bar-length markers)   . toggle one beat",
+	"  Del/Bksp erase   c copy   x cut   v paste (at cursor)",
+	"  Toolbar Add/Remove add/remove a block row (a / D keys)",
+	"  Click a marker to toggle it; right-click to erase.",
 	"",
 	"# Live punch-in",
 	"  Pick 'In:', arm record (F5). While playing, controller",

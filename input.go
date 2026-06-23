@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -30,6 +29,12 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 	k := ev.Key()
 	r := ev.Rune()
 	mod := ev.Modifiers()
+
+	// Time-signature dropdown: Esc closes it.
+	if a.ed.showSig && k == tcell.KeyEsc {
+		a.ed.showSig = false
+		return true
+	}
 
 	// Global keys first (suspended during text-field entry).
 	if a.ed.focus != FocusBPM && a.ed.focus != FocusLen {
@@ -77,7 +82,11 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 			return true
 		}
 		if k == tcell.KeyRune && r == ' ' {
-			a.player.playFrom(a.ed.arrCursor)
+			if a.player.isPlaying() {
+				a.player.stop()
+			} else {
+				a.player.playFrom()
+			}
 			return true
 		}
 	}
@@ -152,7 +161,7 @@ func (a *App) handleLenKey(k tcell.Key, r rune) {
 func (a *App) handleTrackerKey(k tcell.Key, r rune, mod tcell.ModMask) {
 	a.song.mu.Lock()
 	blk := a.song.Blocks[a.ed.editBlock]
-	tpb := a.song.TicksPerBeat
+	tpb := a.song.ticksPerBeat()
 	a.song.mu.Unlock()
 
 	shift := mod&tcell.ModShift != 0
@@ -308,63 +317,32 @@ func (a *App) resetCursorToBlock() {
 	a.song.mu.Unlock()
 }
 
-// --- arrangement ---
+// --- piano roll ---
 
 func (a *App) handleArrangeKey(k tcell.Key, r rune, mod tcell.ModMask) {
-	a.song.mu.Lock()
-	n := len(a.song.Arrangement)
-	nb := len(a.song.Blocks)
-	a.song.mu.Unlock()
-
 	shift := mod&tcell.ModShift != 0
-
 	switch k {
 	case tcell.KeyLeft:
-		if shift {
-			a.extendSel(-1, n)
-		} else {
-			a.ed.arrCursor = clampInt(a.ed.arrCursor-1, 0, max(0, n-1))
-			a.ed.selActive = false
-		}
+		a.rollMove(0, -1, shift)
 		return
 	case tcell.KeyRight:
-		if shift {
-			a.extendSel(1, n)
-		} else {
-			a.ed.arrCursor = clampInt(a.ed.arrCursor+1, 0, max(0, n-1))
-			a.ed.selActive = false
-		}
-		return
-	case tcell.KeyHome:
-		a.ed.arrCursor = 0
-		return
-	case tcell.KeyEnd:
-		a.ed.arrCursor = max(0, n-1)
+		a.rollMove(0, 1, shift)
 		return
 	case tcell.KeyUp:
-		a.cycleSlot(1, nb)
+		a.rollMove(-1, 0, shift)
 		return
 	case tcell.KeyDown:
-		a.cycleSlot(-1, nb)
+		a.rollMove(1, 0, shift)
+		return
+	case tcell.KeyHome:
+		a.ed.selActive = false
+		a.ed.rollBeat = 0
 		return
 	case tcell.KeyEnter:
-		a.song.mu.Lock()
-		if a.ed.arrCursor < len(a.song.Arrangement) {
-			a.ed.editBlock = a.song.Arrangement[a.ed.arrCursor]
-		}
-		a.song.mu.Unlock()
-		a.player.setEditBlock(a.ed.editBlock)
-		a.ed.focus = FocusTracker
-		a.resetCursorToBlock()
+		a.rollPaintCursor()
 		return
-	case tcell.KeyInsert:
-		a.song.mu.Lock()
-		a.song.arrInsert(a.ed.arrCursor, a.ed.editBlock)
-		a.song.mu.Unlock()
-		a.ed.status = "Inserted block into arrangement"
-		return
-	case tcell.KeyDelete:
-		a.arrRemoveSel()
+	case tcell.KeyDelete, tcell.KeyBackspace, tcell.KeyBackspace2:
+		a.rollEraseSel()
 		return
 	}
 
@@ -372,107 +350,157 @@ func (a *App) handleArrangeKey(k tcell.Key, r rune, mod tcell.ModMask) {
 		return
 	}
 	switch r {
-	case 'i':
-		a.song.mu.Lock()
-		a.song.arrInsert(a.ed.arrCursor, a.ed.editBlock)
-		a.song.mu.Unlock()
-		a.ed.status = "Inserted block into arrangement"
-	case 'a':
-		a.song.mu.Lock()
-		a.song.arrInsert(len(a.song.Arrangement), a.ed.editBlock)
-		a.ed.arrCursor = len(a.song.Arrangement) - 1
-		a.song.mu.Unlock()
-		a.ed.status = "Appended block to arrangement"
-	case 'x':
-		a.arrRemoveSel()
+	case '.':
+		a.rollToggle()
+	case 'p':
+		a.rollPaintCursor()
 	case 'c':
-		a.copyArr()
+		a.markCopy()
+	case 'x':
+		a.markCut()
 	case 'v':
-		a.pasteArr()
-	case ',', '<':
-		a.moveSel(-1)
-	case '.', '>':
-		a.moveSel(1)
-	case 'n':
-		a.song.mu.Lock()
-		bi := a.song.addBlock(16, 4)
-		a.song.mu.Unlock()
-		a.ed.editBlock = bi
-		a.player.setEditBlock(bi)
-		a.ed.status = "Created new block"
+		a.markPaste()
+	case 'a':
+		a.blockAddBelow()
 	case 'd':
-		a.song.mu.Lock()
-		bi := a.song.duplicateBlock(a.ed.editBlock)
-		a.song.mu.Unlock()
-		a.ed.editBlock = bi
-		a.player.setEditBlock(bi)
-		a.ed.status = "Duplicated block"
+		a.blockDuplicate()
 	case 'D':
-		a.song.mu.Lock()
-		a.song.removeBlock(a.ed.editBlock)
-		a.ed.editBlock = clampInt(a.ed.editBlock, 0, len(a.song.Blocks)-1)
-		a.song.mu.Unlock()
-		a.player.setEditBlock(a.ed.editBlock)
-		a.ed.status = "Removed block from palette"
+		a.blockRemoveCurrent()
 	}
 }
 
-func (a *App) extendSel(delta, n int) {
-	if !a.ed.selActive {
-		a.ed.selActive = true
-		a.ed.selAnchor = a.ed.arrCursor
-	}
-	a.ed.arrCursor = clampInt(a.ed.arrCursor+delta, 0, max(0, n-1))
-}
-
-func (a *App) cycleSlot(delta, nb int) {
+// rollMove moves the roll cursor; with shift it extends the selection.
+func (a *App) rollMove(dr, db int, shift bool) {
 	a.song.mu.Lock()
-	defer a.song.mu.Unlock()
-	if a.ed.arrCursor < len(a.song.Arrangement) && nb > 0 {
-		a.song.Arrangement[a.ed.arrCursor] = wrap(a.song.Arrangement[a.ed.arrCursor]+delta, nb)
-	}
-}
-
-func (a *App) copyArr() {
-	lo, hi := a.ed.selRange()
-	a.song.mu.Lock()
-	defer a.song.mu.Unlock()
-	if lo < 0 || lo >= len(a.song.Arrangement) {
-		return
-	}
-	if hi >= len(a.song.Arrangement) {
-		hi = len(a.song.Arrangement) - 1
-	}
-	a.ed.arrClip = append([]int{}, a.song.Arrangement[lo:hi+1]...)
-	a.ed.status = fmt.Sprintf("Copied %d slot(s)", len(a.ed.arrClip))
-}
-
-func (a *App) pasteArr() {
-	if len(a.ed.arrClip) == 0 {
-		return
-	}
-	a.song.mu.Lock()
-	at := a.ed.arrCursor + 1
-	for i, bi := range a.ed.arrClip {
-		a.song.arrInsert(at+i, bi)
-	}
-	a.ed.arrCursor = at + len(a.ed.arrClip) - 1
+	nb := len(a.song.Blocks)
 	a.song.mu.Unlock()
-	a.ed.status = fmt.Sprintf("Pasted %d slot(s)", len(a.ed.arrClip))
-}
-
-func (a *App) moveSel(delta int) {
-	lo, hi := a.ed.selRange()
-	a.song.mu.Lock()
-	nf, nt := a.song.arrMove(lo, hi, delta)
-	a.song.mu.Unlock()
-	if a.ed.selActive {
-		a.ed.selAnchor = nf
-		a.ed.arrCursor = nt
+	if shift {
+		if !a.ed.selActive {
+			a.ed.selActive = true
+			a.ed.selRow = a.ed.editBlock
+			a.ed.selBeat = a.ed.rollBeat
+		}
 	} else {
-		a.ed.arrCursor = nf
+		a.ed.selActive = false
 	}
-	a.ed.status = "Moved selection"
+	if dr != 0 {
+		a.ed.editBlock = clampInt(a.ed.editBlock+dr, 0, max(0, nb-1))
+		a.player.setEditBlock(a.ed.editBlock)
+		a.resetCursorToBlock()
+	}
+	if db != 0 {
+		a.ed.rollBeat = clampInt(a.ed.rollBeat+db, 0, rollBeats-1)
+	}
+}
+
+func (a *App) rollToggle() {
+	a.song.mu.Lock()
+	v := a.song.rollGet(a.ed.editBlock, a.ed.rollBeat)
+	a.song.rollSet(a.ed.editBlock, a.ed.rollBeat, !v)
+	a.song.mu.Unlock()
+}
+
+func (a *App) rollPaintCursor() {
+	a.song.mu.Lock()
+	a.song.rollPaint(a.ed.editBlock, a.ed.rollBeat)
+	a.song.mu.Unlock()
+	a.ed.status = "Placed block (bar-length markers) on the roll"
+}
+
+func (a *App) rollEraseSel() {
+	r0, b0, r1, b1 := a.ed.rollSelRect()
+	a.song.mu.Lock()
+	for r := r0; r <= r1; r++ {
+		for b := b0; b <= b1; b++ {
+			a.song.rollSet(r, b, false)
+		}
+	}
+	a.song.mu.Unlock()
+	a.ed.selActive = false
+	a.ed.status = "Erased markers"
+}
+
+func (a *App) markCopy() {
+	r0, b0, r1, b1 := a.ed.rollSelRect()
+	clip := make([][]bool, 0, r1-r0+1)
+	a.song.mu.Lock()
+	for r := r0; r <= r1; r++ {
+		row := make([]bool, b1-b0+1)
+		for b := b0; b <= b1; b++ {
+			row[b-b0] = a.song.rollGet(r, b)
+		}
+		clip = append(clip, row)
+	}
+	a.song.mu.Unlock()
+	a.ed.markClip = clip
+	a.ed.status = fmt.Sprintf("Copied %dx%d markers", len(clip), b1-b0+1)
+}
+
+func (a *App) markCut() {
+	a.markCopy()
+	a.rollEraseSel()
+	a.ed.status = "Cut markers"
+}
+
+// markPaste writes the clipboard with its top-left corner at the cursor.
+func (a *App) markPaste() {
+	if len(a.ed.markClip) == 0 {
+		return
+	}
+	a.song.mu.Lock()
+	for dr, row := range a.ed.markClip {
+		for db, v := range row {
+			a.song.rollSet(a.ed.editBlock+dr, a.ed.rollBeat+db, v)
+		}
+	}
+	a.song.mu.Unlock()
+	a.ed.status = "Pasted markers at cursor"
+}
+
+// --- block list operations (piano-roll rows) ---
+
+func (a *App) blockAddBelow() {
+	a.song.mu.Lock()
+	at := a.song.addBlockAt(a.ed.editBlock)
+	a.song.mu.Unlock()
+	a.ed.editBlock = at
+	a.player.setEditBlock(at)
+	a.resetCursorToBlock()
+	a.ed.status = "Added block below"
+}
+
+func (a *App) blockDuplicate() {
+	a.song.mu.Lock()
+	at := a.song.duplicateBlockAt(a.ed.editBlock)
+	a.song.mu.Unlock()
+	a.ed.editBlock = at
+	a.player.setEditBlock(at)
+	a.resetCursorToBlock()
+	a.ed.status = "Duplicated block"
+}
+
+func (a *App) blockRemoveCurrent() {
+	a.song.mu.Lock()
+	a.song.removeBlockAt(a.ed.editBlock)
+	a.ed.editBlock = clampInt(a.ed.editBlock, 0, len(a.song.Blocks)-1)
+	a.song.mu.Unlock()
+	a.player.setEditBlock(a.ed.editBlock)
+	a.resetCursorToBlock()
+	a.ed.status = "Removed block"
+}
+
+// --- time-signature dropdown ---
+
+func (a *App) selectSig(i int) {
+	if i < 0 || i >= len(timeSigs) {
+		return
+	}
+	a.song.mu.Lock()
+	a.song.setSig(timeSigs[i])
+	a.song.mu.Unlock()
+	a.ed.showSig = false
+	a.resetCursorToBlock()
+	a.ed.status = "Time signature: " + timeSigs[i].String()
 }
 
 // --- shared transport helpers ---
@@ -504,48 +532,68 @@ func (a *App) toggleLoop() {
 
 func (a *App) handleMouse(ev *tcell.EventMouse) {
 	cur := ev.Buttons()
-	x, y := ev.Position()
-	mod := ev.Modifiers()
-	pressed := cur & ^a.prevBtn
+	prev := a.prevBtn
 	a.prevBtn = cur
+	x, y := ev.Position()
+	shift := ev.Modifiers()&tcell.ModShift != 0
 
-	if pressed == 0 {
-		return // motion or release; nothing to do
+	pPress := cur&tcell.ButtonPrimary != 0 && prev&tcell.ButtonPrimary == 0
+	pHeld := cur&tcell.ButtonPrimary != 0 && prev&tcell.ButtonPrimary != 0
+	pRelease := cur&tcell.ButtonPrimary == 0 && prev&tcell.ButtonPrimary != 0
+	sPress := cur&tcell.ButtonSecondary != 0 && prev&tcell.ButtonSecondary == 0
+
+	// A drag begun on the piano roll: extend the selection while held, and on
+	// release toggle the marker if the pointer never moved (i.e. a plain click).
+	if a.rollDrag {
+		if pHeld {
+			if reg, ok := a.ed.hitTest(x, y); ok && reg.action == ActRollCell {
+				if reg.data1 != a.dragRow || reg.data2 != a.dragBeat {
+					a.dragMoved = true
+				}
+				if a.dragMoved {
+					a.ed.selActive = true
+					a.ed.selRow = a.dragRow
+					a.ed.selBeat = a.dragBeat
+					a.ed.editBlock = reg.data1
+					a.player.setEditBlock(reg.data1)
+					a.resetCursorToBlock()
+					a.ed.rollBeat = reg.data2
+				}
+			}
+			return
+		}
+		if pRelease {
+			a.rollDrag = false
+			if !a.dragMoved {
+				a.rollToggle()
+			}
+			return
+		}
+		return
 	}
 
-	// Help overlay: a click anywhere closes it.
+	if !pPress && !sPress {
+		return // motion or release with nothing pending
+	}
 	if a.ed.showHelp {
 		a.ed.showHelp = false
 		return
 	}
 
-	left := pressed&tcell.ButtonPrimary != 0
-	right := pressed&tcell.ButtonSecondary != 0
-	shift := mod&tcell.ModShift != 0
-
-	// Detect double-click on the primary button.
-	dbl := false
-	if left {
-		now := time.Now()
-		if now.Sub(a.lastClickAt) < dblClickWindow &&
-			a.lastClickBtn == tcell.ButtonPrimary &&
-			a.lastClickX == x && a.lastClickY == y {
-			dbl = true
-		}
-		a.lastClickAt = now
-		a.lastClickX = x
-		a.lastClickY = y
-		a.lastClickBtn = tcell.ButtonPrimary
-	}
-
 	reg, ok := a.ed.hitTest(x, y)
 	if !ok {
+		a.ed.showSig = false
 		return
 	}
+	right := sPress
 
 	switch reg.action {
 	case ActPlay:
-		a.player.playFrom(a.ed.arrCursor)
+		if a.player.isPlaying() {
+			a.player.stop()
+		} else {
+			a.player.playFrom()
+		}
 	case ActStop:
 		a.player.stop()
 	case ActRecord:
@@ -562,7 +610,9 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		a.ed.bpmBuf = strconv.FormatFloat(a.song.BPM, 'f', -1, 64)
 		a.song.mu.Unlock()
 	case ActTimeSig:
-		a.cycleTimeSig()
+		a.ed.showSig = !a.ed.showSig
+	case ActSigOption:
+		a.selectSig(reg.data1)
 	case ActMidiOut:
 		a.midi.cycleOut()
 		a.ed.status = "MIDI out: " + a.midi.OutName()
@@ -586,16 +636,16 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		a.lenDouble()
 	case ActLenField:
 		a.startLenEdit()
-	case ActArrAdd:
-		a.arrAddCurrent()
-	case ActArrRemove:
-		a.arrRemoveSel()
-	case ActArrCut:
-		a.arrCut()
-	case ActArrCopy:
-		a.copyArr()
-	case ActArrPaste:
-		a.pasteArr()
+	case ActBlockAdd:
+		a.blockAddBelow()
+	case ActBlockRemove:
+		a.blockRemoveCurrent()
+	case ActMarkCut:
+		a.markCut()
+	case ActMarkCopy:
+		a.markCopy()
+	case ActMarkPaste:
+		a.markPaste()
 	case ActTrackerCell:
 		a.ed.focus = FocusTracker
 		a.ed.curTrack = reg.data1
@@ -604,61 +654,50 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		if right {
 			a.setCell(func(st *Step) { *st = emptyStep() })
 		}
-	case ActArrSlot:
+	case ActRollLabel:
 		a.ed.focus = FocusArrange
-		if shift {
-			if !a.ed.selActive {
-				a.ed.selActive = true
-				a.ed.selAnchor = a.ed.arrCursor
-			}
-			a.ed.arrCursor = reg.data1
-		} else {
-			a.ed.arrCursor = reg.data1
-			a.ed.selActive = false
-		}
+		a.ed.selActive = false
+		a.ed.editBlock = reg.data1
+		a.player.setEditBlock(reg.data1)
+		a.resetCursorToBlock()
+	case ActRollCell:
+		a.ed.focus = FocusArrange
 		if right {
-			a.song.mu.Lock()
-			a.song.arrDelete(reg.data1, reg.data1)
-			a.song.mu.Unlock()
-		}
-		if dbl {
-			a.song.mu.Lock()
-			if reg.data1 < len(a.song.Arrangement) {
-				a.ed.editBlock = a.song.Arrangement[reg.data1]
-			}
-			a.song.mu.Unlock()
-			a.player.setEditBlock(a.ed.editBlock)
-			a.ed.focus = FocusTracker
-			a.resetCursorToBlock()
-		}
-	case ActBlockPick:
-		if right {
-			a.song.mu.Lock()
-			a.song.arrInsert(a.ed.arrCursor, reg.data1)
-			a.song.mu.Unlock()
-			a.ed.status = "Inserted block into arrangement"
-		} else {
 			a.ed.editBlock = reg.data1
 			a.player.setEditBlock(reg.data1)
 			a.resetCursorToBlock()
+			a.ed.rollBeat = reg.data2
+			a.song.mu.Lock()
+			a.song.rollSet(reg.data1, reg.data2, false)
+			a.song.mu.Unlock()
+			a.ed.selActive = false
+		} else if shift {
+			if !a.ed.selActive {
+				a.ed.selActive = true
+				a.ed.selRow = a.ed.editBlock
+				a.ed.selBeat = a.ed.rollBeat
+			}
+			a.ed.editBlock = reg.data1
+			a.player.setEditBlock(reg.data1)
+			a.resetCursorToBlock()
+			a.ed.rollBeat = reg.data2
+		} else {
+			a.ed.selActive = false
+			a.ed.editBlock = reg.data1
+			a.player.setEditBlock(reg.data1)
+			a.resetCursorToBlock()
+			a.ed.rollBeat = reg.data2
+			a.rollDrag = true
+			a.dragRow = reg.data1
+			a.dragBeat = reg.data2
+			a.dragMoved = false
 		}
 	}
-}
 
-func (a *App) cycleTimeSig() {
-	options := []TimeSig{{4, 4}, {3, 4}, {6, 8}, {5, 4}, {7, 8}, {2, 4}}
-	a.song.mu.Lock()
-	cur := a.song.Sig
-	idx := 0
-	for i, o := range options {
-		if o == cur {
-			idx = i
-			break
-		}
+	// Any click that is not on the dropdown (or its toggle) dismisses it.
+	if reg.action != ActSigOption && reg.action != ActTimeSig {
+		a.ed.showSig = false
 	}
-	a.song.Sig = options[(idx+1)%len(options)]
-	a.song.mu.Unlock()
-	a.ed.status = "Time signature: " + a.song.Sig.String()
 }
 
 func (a *App) deleteCurrentTrack() {
@@ -712,37 +751,6 @@ func (a *App) gotoBlock(delta int) {
 	a.ed.editBlock = wrap(a.ed.editBlock+delta, n)
 	a.player.setEditBlock(a.ed.editBlock)
 	a.resetCursorToBlock()
-}
-
-// --- arrangement toolbar operations ---
-
-func (a *App) arrAddCurrent() {
-	a.song.mu.Lock()
-	at := a.ed.arrCursor + 1
-	if len(a.song.Arrangement) == 0 {
-		at = 0
-	}
-	a.song.arrInsert(at, a.ed.editBlock)
-	a.ed.arrCursor = clampInt(at, 0, len(a.song.Arrangement)-1)
-	a.song.mu.Unlock()
-	a.ed.status = "Added block to arrangement"
-}
-
-func (a *App) arrRemoveSel() {
-	lo, hi := a.ed.selRange()
-	a.song.mu.Lock()
-	a.song.arrDelete(lo, hi)
-	n := len(a.song.Arrangement)
-	a.song.mu.Unlock()
-	a.ed.arrCursor = clampInt(lo, 0, max(0, n-1))
-	a.ed.selActive = false
-	a.ed.status = "Removed arrangement slot(s)"
-}
-
-func (a *App) arrCut() {
-	a.copyArr()
-	a.arrRemoveSel()
-	a.ed.status = "Cut arrangement slot(s)"
 }
 
 // --- live punch-in ---
