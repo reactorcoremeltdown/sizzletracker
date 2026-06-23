@@ -56,24 +56,39 @@ ncurses, with live pattern editing for MIDI "looping".
 ## Build
 
 Requires Go (cgo enabled) and the native **portmidi** and **ncurses**
-libraries.
+libraries. Supported and CI-verified targets: **macOS Apple Silicon**,
+**macOS Intel**, **Linux amd64**, **Linux arm64**.
+
+Plain `go build` works on all of them with no environment variables — the
+cgo directives in [`internal/portmidi/portmidi.go`](internal/portmidi/portmidi.go)
+already list every standard prefix (`/opt/homebrew`, `/usr/local`, and the
+system default search path).
+
+**macOS** (Apple Silicon or Intel):
 
 ```sh
-brew install portmidi ncurses      # macOS
-make build                          # detects the Homebrew prefix for cgo
-make run
+brew install portmidi ncurses
+make build && make run        # or just: go build -o sizzletracker .
 ```
 
-On Linux: `apt install libportmidi-dev libncurses-dev` (or distro
-equivalent) and `go build -o sizzletracker .` — the default `/usr/local`
-and pkg-config paths usually just work.
+**Debian / Ubuntu** (amd64 or arm64):
 
-> The `rakyll/portmidi` bindings hardcode `/usr/local` include/lib paths, so
-> on Apple Silicon the Makefile injects `CGO_CFLAGS`/`CGO_LDFLAGS` pointing
-> at `$(brew --prefix)`.
+```sh
+sudo apt-get install -y build-essential libportmidi-dev libncurses-dev pkg-config
+make build && make run        # or just: go build -o sizzletracker .
+```
 
-If portmidi can't be initialised the app still runs (output shows
-`<no portmidi>`); everything works except sound.
+ncurses itself needs no special flags: goncurses links the system ncurses
+on macOS and uses `pkg-config` on Linux. If your libraries live somewhere
+non-standard, export `CGO_CFLAGS` / `CGO_LDFLAGS` and they are merged in.
+
+If portmidi can't be initialised the app still runs (the output selector
+shows `<no portmidi>`); everything works except sound.
+
+> The PortMidi binding under `internal/portmidi` is a small vendored copy of
+> [`rakyll/portmidi`](https://github.com/rakyll/portmidi) (Apache-2.0), with
+> only the cgo build directives changed to be platform-aware so no Homebrew
+> prefix shimming is needed.
 
 ## Keyboard
 
@@ -134,6 +149,7 @@ Arrangement focus:
 |------|----------------|
 | `model.go` | Data model: `Song` → `Block` → `Track` → `Step`, plus arrangement edits. Guarded by `Song.mu`. |
 | `midi.go` | PortMidi output/input wrapper (port selection, note on/off, punch-in listener). |
+| `internal/portmidi/` | Vendored PortMidi cgo binding with platform-aware build flags. |
 | `player.go` | Timing goroutine; reads the song under lock each tick (so live edits apply) and manages per-track note lifecycles. |
 | `editor.go` | UI/interaction state and the clickable-region hit-test system. |
 | `ui.go` | ncurses rendering of top bar, tracker and arrangement. |

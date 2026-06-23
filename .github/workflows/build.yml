@@ -1,0 +1,48 @@
+name: build
+
+# Verifies sizzletracker builds (cgo) on every supported target:
+#   macOS Apple Silicon, macOS Intel, Linux amd64, Linux arm64.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            os: macos-14      # Apple Silicon
+          - name: macos-amd64
+            os: macos-13      # Intel
+          - name: linux-amd64
+            os: ubuntu-24.04
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install native deps (macOS)
+        if: runner.os == 'macOS'
+        run: brew install portmidi ncurses
+
+      - name: Install native deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libportmidi-dev libncurses-dev pkg-config
+
+      - name: Build
+        run: CGO_ENABLED=1 go build -o sizzletracker .
+
+      - name: Vet
+        run: CGO_ENABLED=1 go vet ./...

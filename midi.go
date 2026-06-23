@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rakyll/portmidi"
+	"sizzletracker/internal/portmidi"
 )
 
 // portDevice pairs a PortMidi device id with its display name.
