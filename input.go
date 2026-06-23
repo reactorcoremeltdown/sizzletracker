@@ -636,6 +636,13 @@ func (a *App) blockRemoveCurrent() {
 	a.ed.status = "Removed block"
 }
 
+// setLowerFromY resizes the lower (piano-roll) pane so its separator sits at
+// screen row y. layout() clamps the result so both panes stay visible.
+func (a *App) setLowerFromY(y int) {
+	_, h := a.screen.Size()
+	a.ed.lowerH = h - 2 - y // status row is h-1; lower pane is y+1 .. h-2
+}
+
 // --- time-signature dropdown ---
 
 func (a *App) selectSig(i int) {
@@ -714,6 +721,19 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 			if !a.dragMoved {
 				a.rollToggle()
 			}
+			return
+		}
+		return
+	}
+
+	// Dragging the tracker / piano-roll separator resizes the lower pane.
+	if a.sepDrag {
+		if pHeld {
+			a.setLowerFromY(y)
+			return
+		}
+		if pRelease {
+			a.sepDrag = false
 			return
 		}
 		return
@@ -811,6 +831,9 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		if right {
 			a.setCell(func(st *Step) { *st = emptyStep() })
 		}
+	case ActSeparator:
+		a.sepDrag = true
+		a.setLowerFromY(y)
 	case ActRollLabel:
 		a.ed.focus = FocusArrange
 		a.ed.selActive = false

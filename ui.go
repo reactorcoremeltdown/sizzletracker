@@ -80,6 +80,7 @@ const (
 	// several block rows. The tracker takes all remaining vertical space.
 	arrangeDesiredH = 8
 	minTrackerH     = 5
+	minLowerH       = 3 // toolbar + ruler + at least one block lane
 )
 
 // Transport glyphs. All are single-cell in monospaced terminal fonts; tcell
@@ -206,14 +207,11 @@ func (a *App) draw() {
 
 	fr := a.snapshot()
 
-	topH, statusH := 1, 1
-	lowerH := lowerHeight(h)
-	trackerY := topH
-	trackerH := h - topH - statusH - lowerH
-	arrangeY := topH + trackerH
+	trackerH, sepY, arrangeY, lowerH := a.layout(h)
 
 	a.drawTopBar(0, w, fr)
-	a.drawTracker(trackerY, trackerH, w, fr)
+	a.drawTracker(1, trackerH, w, fr)
+	a.drawSeparator(sepY, w)
 	a.drawPianoRoll(arrangeY, lowerH, w, fr)
 	a.drawStatus(h-1, w)
 
@@ -232,16 +230,46 @@ func (a *App) draw() {
 	a.screen.Show()
 }
 
-func lowerHeight(h int) int {
-	want := arrangeDesiredH
-	maxLower := h - 1 - 1 - minTrackerH
-	if want > maxLower {
-		want = maxLower
+// layout splits the screen between the tracker and the piano roll, honouring
+// the user's chosen lower-pane height (ed.lowerH) while keeping both panes at
+// least their minimum size. There is a 1-row draggable separator between them.
+//
+// Returns the tracker height, the separator row, the piano-roll's top row, and
+// the piano-roll height. (Tracker starts at row 1, below the top bar.)
+func (a *App) layout(h int) (trackerH, sepY, arrangeY, lowerH int) {
+	const topH, statusH, sepH = 1, 1, 1
+	avail := h - topH - statusH - sepH // shared between tracker and lower pane
+
+	want := a.ed.lowerH
+	if want <= 0 {
+		want = arrangeDesiredH
 	}
-	if want < 3 {
-		want = 3
+	if maxLower := avail - minTrackerH; maxLower < minLowerH {
+		// Terminal too short for both minimums: just keep both non-empty.
+		want = clampInt(want, 1, avail-1)
+	} else {
+		want = clampInt(want, minLowerH, maxLower)
 	}
-	return want
+	if want < 1 {
+		want = 1
+	}
+
+	lowerH = want
+	trackerH = avail - lowerH
+	if trackerH < 0 {
+		trackerH = 0
+	}
+	sepY = topH + trackerH
+	arrangeY = sepY + 1
+	return
+}
+
+// drawSeparator renders the draggable divider between the two panes.
+func (a *App) drawSeparator(y, w int) {
+	a.fill(y, 0, w, '-', styBtn)
+	label := "[ drag to resize ]"
+	a.put(y, (w-cellWidth(label))/2, label, styBtn)
+	a.ed.addRegion(Region{x: 0, y: y, w: w, h: 1, action: ActSeparator})
 }
 
 // --- Top bar -------------------------------------------------------------
@@ -726,6 +754,7 @@ var helpLines = []string{
 	"  Del/Bksp erase   c copy   x cut   v paste (at cursor)",
 	"  Toolbar Add/Remove add/remove a block row (a / D keys)",
 	"  Click a marker to toggle it; right-click to erase.",
+	"  Drag the separator bar to resize the tracker / roll panes.",
 	"",
 	"# Live punch-in (polyphonic)",
 	"  Pick 'In:', arm record (F5). Controller note-on/off record at",

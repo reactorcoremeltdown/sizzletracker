@@ -35,15 +35,16 @@ ncurses, with live pattern editing for MIDI "looping".
 * **Adjustable block length** in bar-sized steps. `len - [ N ] +`: `-` halves
   and `+` doubles the number of lines (12 / 24 / 48 for 3/4, 16 / 32 / 64 for
   4/4, 20 / 40 / 80 for 5/4), and clicking the number lets you type a length.
-* **Piano roll (lower half).** A fixed-height 2D arrangement: each **row is a
-  block**, each **column is a beat**, and a **marker** means the block plays
-  that beat. Placing a block paints a whole bar's worth of markers; you can
-  erase individual beats. The playhead scans **left → right**. Blocks
-  interlace vertically and bars interlace horizontally (gridlines every 4
-  beats). **Cut / Copy / Paste** act on a rectangular marker selection (drag
-  or shift+arrows to select; paste lands with its top-left at the cursor).
+* **Piano roll (lower half).** A 2D arrangement: each **row is a block**, each
+  **column is a beat**, and a **marker** means the block plays that beat.
+  Placing a block paints a whole bar's worth of markers; you can erase
+  individual beats. The playhead scans **left → right**. Blocks interlace
+  vertically and bars interlace horizontally (gridlines every 4 beats).
+  **Cut / Copy / Paste** act on a rectangular marker selection (drag or
+  shift+arrows to select; paste lands with its top-left at the cursor).
   **Add / Remove** add a block row below / remove the selected one. A
-  song-time and bar-count readout is shown on the toolbar.
+  song-time and bar-count readout is shown on the toolbar. **Drag the
+  separator bar** between the tracker and the roll to resize the two panes.
 * **Transport in the top bar** with glyph buttons — `▶` play, `■` stop,
   `●` record-arm, `⟲`/`⟳` loop song/block, `⚠` panic — plus an editable
   **BPM** field, a **time-signature dropdown** (3/4, 4/4, 5/4), and **MIDI

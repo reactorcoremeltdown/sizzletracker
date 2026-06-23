@@ -61,6 +61,7 @@ const (
 	ActMarkPaste   // paste markers at the cursor
 	ActRollCell    // data1=block row, data2=beat
 	ActRollLabel   // data1=block row (select for editing)
+	ActSeparator   // draggable divider between tracker and piano roll
 )
 
 // Region is a hit-testable rectangle produced during drawing.
@@ -121,6 +122,9 @@ type Editor struct {
 	// Text-field editing buffers.
 	bpmBuf string
 	lenBuf string
+
+	// User-chosen height of the lower (piano roll) pane; 0 = default.
+	lowerH int
 
 	// Scroll bookkeeping.
 	trackScroll    int // first visible track (tracker, horizontal)

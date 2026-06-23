@@ -48,6 +48,9 @@ type App struct {
 	dragRow   int
 	dragBeat  int
 	dragMoved bool
+
+	// Tracker/piano-roll separator drag state.
+	sepDrag bool
 }
 
 // frameInterval bounds the UI redraw cadence. The event loop redraws on every
