@@ -289,7 +289,12 @@ func (a *App) enterNote(note int) {
 	if note < 0 || note > 127 {
 		return
 	}
-	a.setCell(func(st *Step) { st.Note = note })
+	// Keyboard-entered notes default to channel 1 (index 0), matching the
+	// punch-in default.
+	a.setCell(func(st *Step) {
+		st.Note = note
+		st.Chan = 0
+	})
 	a.advance()
 }
 

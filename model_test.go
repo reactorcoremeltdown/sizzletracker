@@ -128,6 +128,24 @@ func TestPolyphonicPunch(t *testing.T) {
 	}
 }
 
+// TestKeyboardNoteChannel checks a keyboard-entered note defaults to channel 1.
+func TestKeyboardNoteChannel(t *testing.T) {
+	s := newSong()
+	app := &App{song: s, player: newPlayer(s, &MidiEngine{}), ed: newEditor()}
+	app.ed.editBlock = 0
+	app.ed.curTrack = 0
+	app.ed.curTick = 0
+
+	app.enterNote(60)
+	st := s.Blocks[0].Tracks[0].Steps[0]
+	if st.Note != 60 {
+		t.Fatalf("note not entered, got %d", st.Note)
+	}
+	if st.Chan != 0 {
+		t.Errorf("keyboard note channel = %d, want 0 (channel 1)", st.Chan)
+	}
+}
+
 // TestRollPaintErase checks placing a block paints its bar-length of beats and
 // that individual beats can be erased.
 func TestRollPaintErase(t *testing.T) {
