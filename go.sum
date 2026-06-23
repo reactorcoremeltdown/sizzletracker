@@ -1,0 +1,4 @@
+github.com/rakyll/portmidi v0.0.0-20201020180702-d436ceaa537a h1:+qeh9b4LlO8AYVvm+TG4OXDRwBynTLk82t0HDBBBOQ8=
+github.com/rakyll/portmidi v0.0.0-20201020180702-d436ceaa537a/go.mod h1:xKffaBd7e1YUoLpR2azvJqkxEdUDNGNDMlsUNdv6Bcs=
+github.com/rthornton128/goncurses v0.0.0-20251206192105-7e6d2302acca h1:kFR/H0Y6K2vP5EU0lYLoRWXIiLPztK1r6DTUeSkNo08=
+github.com/rthornton128/goncurses v0.0.0-20251206192105-7e6d2302acca/go.mod h1:AHlKFomPTwmO7H2vL8d7VNrQNQmhMi/DBhDnHRhjbCo=
