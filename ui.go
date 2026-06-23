@@ -672,6 +672,7 @@ var helpLines = []string{
 	"  Pick 'In:', arm record (F5). Controller note-on/off record at",
 	"  the playhead. Each held note takes its own track; chords overflow",
 	"  to free tracks and new tracks are created automatically.",
+	"  CC and Program Change from the input pass through to the output.",
 	"",
 	"  Press any key to close this help.",
 }

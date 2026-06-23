@@ -13,10 +13,45 @@ type portDevice struct {
 	name string
 }
 
+// midiKind classifies an incoming channel-voice message for the input router.
+type midiKind int
+
+const (
+	kindOther midiKind = iota
+	kindNoteOn
+	kindNoteOff
+	kindCC // Control Change
+	kindPC // Program Change
+)
+
+// classifyMidi maps a status byte (and note-on velocity) to a midiKind. A
+// note-on with zero velocity is treated as a note-off, per the MIDI spec.
+func classifyMidi(status, data2 int) midiKind {
+	switch status & 0xf0 {
+	case 0x90:
+		if data2 > 0 {
+			return kindNoteOn
+		}
+		return kindNoteOff
+	case 0x80:
+		return kindNoteOff
+	case 0xB0:
+		return kindCC
+	case 0xC0:
+		return kindPC
+	}
+	return kindOther
+}
+
 // MidiEngine wraps PortMidi output/input. Output is monophonic-agnostic (the
 // player decides note lifecycles); input feeds the punch-in recorder.
 type MidiEngine struct {
 	mu sync.Mutex
+
+	// sendMu serializes writes to the output stream: both the player goroutine
+	// and the input passthrough goroutine emit MIDI, and a PortMidi stream is
+	// not safe for concurrent writes.
+	sendMu sync.Mutex
 
 	available bool // PortMidi initialised successfully
 
@@ -173,15 +208,22 @@ func (m *MidiEngine) selectIn(idx int) {
 			default:
 			}
 			events, err := str.Read(64)
-			if err == nil && cb != nil {
+			if err == nil {
 				for _, e := range events {
-					status := e.Status & 0xf0
-					ch := int(e.Status & 0x0f)
-					switch {
-					case status == 0x90 && e.Data2 > 0:
-						cb(true, int(e.Data1), int(e.Data2), ch)
-					case status == 0x80 || (status == 0x90 && e.Data2 == 0):
-						cb(false, int(e.Data1), int(e.Data2), ch)
+					ch := int(e.Status) & 0x0f
+					switch classifyMidi(int(e.Status), int(e.Data2)) {
+					case kindNoteOn:
+						if cb != nil {
+							cb(true, int(e.Data1), int(e.Data2), ch)
+						}
+					case kindNoteOff:
+						if cb != nil {
+							cb(false, int(e.Data1), int(e.Data2), ch)
+						}
+					case kindCC: // Control Change -> passthrough
+						m.forward(int(e.Status), int(e.Data1), int(e.Data2))
+					case kindPC: // Program Change -> passthrough (2-byte message)
+						m.forward(int(e.Status), int(e.Data1), 0)
 					}
 				}
 			}
@@ -212,36 +254,38 @@ func (m *MidiEngine) setInputCallback(cb func(on bool, note, vel, ch int)) {
 	m.mu.Unlock()
 }
 
-func (m *MidiEngine) noteOn(ch, note, vel int) {
+// sendShort writes one short MIDI message to the current output, serialized
+// against every other sender. status carries the channel in its low nibble.
+func (m *MidiEngine) sendShort(status, d1, d2 int) {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
 	m.mu.Lock()
 	str := m.outStr
 	m.mu.Unlock()
 	if str == nil {
 		return
 	}
-	str.WriteShort(int64(0x90|(ch&0x0f)), int64(note&0x7f), int64(vel&0x7f))
+	str.WriteShort(int64(status&0xff), int64(d1&0x7f), int64(d2&0x7f))
+}
+
+func (m *MidiEngine) noteOn(ch, note, vel int) {
+	m.sendShort(0x90|(ch&0x0f), note, vel)
 }
 
 func (m *MidiEngine) noteOff(ch, note int) {
-	m.mu.Lock()
-	str := m.outStr
-	m.mu.Unlock()
-	if str == nil {
-		return
-	}
-	str.WriteShort(int64(0x80|(ch&0x0f)), int64(note&0x7f), 0)
+	m.sendShort(0x80|(ch&0x0f), note, 0)
+}
+
+// forward passes an input message straight through to the output (MIDI thru),
+// preserving its channel. Used for CC / Program Change passthrough.
+func (m *MidiEngine) forward(status, d1, d2 int) {
+	m.sendShort(status, d1, d2)
 }
 
 // allNotesOff sends CC 123 on all channels.
 func (m *MidiEngine) allNotesOff() {
-	m.mu.Lock()
-	str := m.outStr
-	m.mu.Unlock()
-	if str == nil {
-		return
-	}
 	for ch := 0; ch < 16; ch++ {
-		str.WriteShort(int64(0xB0|ch), 123, 0)
+		m.sendShort(0xB0|ch, 123, 0)
 	}
 }
 
