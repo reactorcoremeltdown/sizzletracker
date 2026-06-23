@@ -85,9 +85,15 @@ func (b *Block) clone() *Block {
 	return c
 }
 
+// maxBlockLen caps how long a single block may grow (defensive bound).
+const maxBlockLen = 1024
+
 func (b *Block) setLength(n int) {
 	if n < 1 {
 		n = 1
+	}
+	if n > maxBlockLen {
+		n = maxBlockLen
 	}
 	b.Length = n
 	for _, t := range b.Tracks {
@@ -150,6 +156,18 @@ func (s *Song) ticksPerBar() int {
 // secondsPerTick is the wall-clock duration of one tracker row.
 func (s *Song) secondsPerTick() float64 {
 	return 60.0 / s.BPM / float64(s.TicksPerBeat)
+}
+
+// totalTicks is the number of ticks in one pass through the arrangement
+// (i.e. the song length without any looping/repeat).
+func (s *Song) totalTicks() int {
+	t := 0
+	for _, bi := range s.Arrangement {
+		if bi >= 0 && bi < len(s.Blocks) {
+			t += s.Blocks[bi].Length
+		}
+	}
+	return t
 }
 
 // addBlock creates a fresh block modelled on the dimensions of an existing one

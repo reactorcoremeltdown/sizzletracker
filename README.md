@@ -28,11 +28,19 @@ ncurses, with live pattern editing for MIDI "looping".
   Rows are interlaced and **beats / bars are highlighted** (bar rows bold
   yellow, beat rows cyan). Each track has three columns:
   **note (+octave)**, **velocity** (hex), and **MIDI channel**.
-  Tracks are unlimited — add more with the `+trk` header button; the grid
-  scrolls horizontally.
-* **Arrangement (lower half).** A larger step sequencer where each slot
-  references a block (a whole set of tracks). Select, copy, paste, move,
-  insert, delete slots; create / duplicate / remove blocks.
+  Tracks are unlimited — add/remove with the `+trk` / `-trk` controls; the
+  grid scrolls horizontally. The tracker takes all vertical space left by the
+  fixed-height arrangement segment and **scrolls vertically** when the block
+  is taller than the screen (following the playhead during playback).
+* **Adjustable block length.** A controls row exposes `len - [ N ] +`:
+  `-` halves and `+` doubles the number of lines, and clicking the number
+  lets you type an arbitrary length. All tracks in the block resize together.
+* **Arrangement (lower half).** A fixed-height step sequencer where each slot
+  references a block (a whole set of tracks), with a toolbar —
+  **Add / Remove / Cut / Copy / Paste** — plus select, move, insert, and
+  create / duplicate / remove blocks. A **song-time** readout (`time
+  elapsed / total`, computed for one pass with no repeat) and the live
+  **playhead position** (`arr i/n · row`) are shown here.
 * **Transport in the top bar** with glyph buttons — `|>` play/stop, `[]`
   stop, `()` record-arm, `<>`/`@@` loop song/block, `!!` panic — plus an
   editable **BPM** field, a clickable **time-signature** cycle, and **MIDI
@@ -124,9 +132,15 @@ Tracker focus:
 | `-` / `=` | Octave down / up |
 | velocity column | hex digits `0-9 a-f` (two-nibble entry) |
 | channel column | decimal digits (1–16) |
-| `+trk` / `-trk` header buttons | add / delete the cursor track |
+| `+trk` / `-trk` controls | add / delete the cursor track |
+| `len  -` / `+` controls | halve / double the block length |
+| click the `len` number | type an arbitrary block length |
 
-Arrangement focus:
+(Large blocks scroll vertically to keep the cursor/playhead visible; the
+controls row also has `<` / `>` buttons mirroring `[` / `]` for block
+navigation.)
+
+Arrangement focus (toolbar buttons: **Add Remove Cut Copy Paste**):
 
 | Key | Action |
 |-----|--------|
@@ -150,13 +164,18 @@ Arrangement focus:
 | `model.go` | Data model: `Song` → `Block` → `Track` → `Step`, plus arrangement edits. Guarded by `Song.mu`. |
 | `midi.go` | PortMidi output/input wrapper (port selection, note on/off, punch-in listener). |
 | `internal/portmidi/` | Vendored PortMidi cgo binding with platform-aware build flags. |
-| `player.go` | Timing goroutine; reads the song under lock each tick (so live edits apply) and manages per-track note lifecycles. |
+| `player.go` | Timing goroutine; each tick it *collects* note events under lock and emits MIDI after releasing the lock, so playback timing is unaffected by rendering or input. |
 | `editor.go` | UI/interaction state and the clickable-region hit-test system. |
-| `ui.go` | ncurses rendering of top bar, tracker and arrangement. |
+| `ui.go` | ncurses rendering; copies a per-frame snapshot of the song under a brief lock, then draws from the copy. |
 | `input.go` | Keyboard + mouse handling and punch-in. |
-| `main.go` | Wiring and the event loop. |
+| `main.go` | Wiring and the fixed-cadence (~30 fps) event loop. |
 
-Concurrency: the player runs in its own goroutine and touches only the song
-(under `Song.mu`) and MIDI. The editor state is owned solely by the UI
-goroutine; MIDI input arrives on a separate goroutine and is forwarded to the
-UI loop over a channel, so the editor is never accessed concurrently.
+Concurrency / smoothness: the player runs in its own goroutine and, on each
+tick, reads the song under `Song.mu` only long enough to gather the events to
+play — the actual (potentially blocking) MIDI sends happen with no lock held.
+The renderer likewise holds `Song.mu` only for a brief snapshot copy and then
+draws without it, and the main loop redraws on a fixed ~30 fps schedule with
+input processing bounded per frame. The net effect is that no amount of user
+input can stall MIDI playback or screen updates. The editor state is owned
+solely by the UI goroutine; MIDI input arrives on a separate goroutine and is
+forwarded to the UI loop over a channel. Verified clean under `go build -race`.

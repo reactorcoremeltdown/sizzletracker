@@ -7,6 +7,7 @@ const (
 	FocusTracker Focus = iota // upper half: editing the steps of a block
 	FocusArrange              // lower half: arranging blocks into a song
 	FocusBPM                  // editing the BPM text field in the top bar
+	FocusLen                  // editing the block-length text field
 )
 
 // Column indices within a track.
@@ -35,7 +36,18 @@ const (
 	ActArrSlot     // data1=arrangement index
 	ActBlockPick   // data1=block index (palette)
 	ActAddTrack
-	ActDelTrack // data1=track index to delete
+	ActDelTrack  // data1=track index to delete
+	ActBlockPrev // edit previous block
+	ActBlockNext // edit next block
+	ActLenHalf   // halve block length
+	ActLenDouble // double block length
+	ActLenField  // edit block length text field
+	// Lower-segment toolbar (arrangement block ops).
+	ActArrAdd
+	ActArrRemove
+	ActArrCut
+	ActArrCopy
+	ActArrPaste
 )
 
 // Region is a hit-testable rectangle produced during drawing.
@@ -85,9 +97,12 @@ type Editor struct {
 
 	// Top-bar BPM text field editing buffer.
 	bpmBuf string
+	// Block-length text field editing buffer.
+	lenBuf string
 
 	// Layout bookkeeping for scrolling.
 	trackScroll int // first visible track index (horizontal)
+	tickScroll  int // first visible tick (vertical)
 
 	// Collected each frame for mouse hit-testing.
 	regions []Region

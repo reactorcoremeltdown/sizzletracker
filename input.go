@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	gc "github.com/rthornton128/goncurses"
 )
@@ -25,8 +26,8 @@ func (a *App) handleKey(ch gc.Key) bool {
 		return true
 	}
 
-	// Global keys first (work in any focus except BPM text entry).
-	if a.ed.focus != FocusBPM {
+	// Global keys first (work in any focus except text-field entry).
+	if a.ed.focus != FocusBPM && a.ed.focus != FocusLen {
 		switch ch {
 		case gc.KEY_F10:
 			return false // quit
@@ -76,12 +77,38 @@ func (a *App) handleKey(ch gc.Key) bool {
 	switch a.ed.focus {
 	case FocusBPM:
 		a.handleBPMKey(ch)
+	case FocusLen:
+		a.handleLenKey(ch)
 	case FocusTracker:
 		a.handleTrackerKey(ch)
 	case FocusArrange:
 		a.handleArrangeKey(ch)
 	}
 	return true
+}
+
+// handleLenKey edits the block-length text field.
+func (a *App) handleLenKey(ch gc.Key) {
+	switch ch {
+	case gc.KEY_ENTER, gc.KEY_RETURN, 13:
+		if v, err := strconv.Atoi(strings.TrimSpace(a.ed.lenBuf)); err == nil && v >= 1 {
+			a.blockSetLength(v)
+			a.ed.status = fmt.Sprintf("Block length set to %d", v)
+		} else {
+			a.ed.status = "Invalid length"
+		}
+		a.ed.focus = FocusTracker
+	case gc.KEY_ESC:
+		a.ed.focus = FocusTracker
+	case gc.KEY_BACKSPACE, 127, 8:
+		if len(a.ed.lenBuf) > 0 {
+			a.ed.lenBuf = a.ed.lenBuf[:len(a.ed.lenBuf)-1]
+		}
+	default:
+		if ch >= '0' && ch <= '9' && len(a.ed.lenBuf) < 4 {
+			a.ed.lenBuf += string(rune(ch))
+		}
+	}
 }
 
 func (a *App) handleBPMKey(ch gc.Key) {
@@ -474,6 +501,26 @@ func (a *App) handleMouse() {
 		a.ed.status = "Added track"
 	case ActDelTrack:
 		a.deleteCurrentTrack()
+	case ActBlockPrev:
+		a.gotoBlock(-1)
+	case ActBlockNext:
+		a.gotoBlock(1)
+	case ActLenHalf:
+		a.lenHalve()
+	case ActLenDouble:
+		a.lenDouble()
+	case ActLenField:
+		a.startLenEdit()
+	case ActArrAdd:
+		a.arrAddCurrent()
+	case ActArrRemove:
+		a.arrRemoveSel()
+	case ActArrCut:
+		a.arrCut()
+	case ActArrCopy:
+		a.copyArr()
+	case ActArrPaste:
+		a.pasteArr()
 	case ActTrackerCell:
 		a.ed.focus = FocusTracker
 		a.ed.curTrack = reg.data1
@@ -551,6 +598,77 @@ func (a *App) deleteCurrentTrack() {
 		a.ed.status = "Cannot delete the last track"
 	}
 	a.song.mu.Unlock()
+}
+
+// --- block length & navigation ---
+
+func (a *App) blockSetLength(n int) {
+	a.song.mu.Lock()
+	blk := a.song.Blocks[a.ed.editBlock]
+	blk.setLength(n)
+	a.ed.curTick = clampInt(a.ed.curTick, 0, blk.Length-1)
+	a.song.mu.Unlock()
+}
+
+func (a *App) blockLen() int {
+	a.song.mu.Lock()
+	defer a.song.mu.Unlock()
+	return a.song.Blocks[a.ed.editBlock].Length
+}
+
+func (a *App) lenHalve() {
+	a.blockSetLength(max(1, a.blockLen()/2))
+	a.ed.status = fmt.Sprintf("Block length %d", a.blockLen())
+}
+
+func (a *App) lenDouble() {
+	a.blockSetLength(a.blockLen() * 2)
+	a.ed.status = fmt.Sprintf("Block length %d", a.blockLen())
+}
+
+func (a *App) startLenEdit() {
+	a.ed.focus = FocusLen
+	a.ed.lenBuf = strconv.Itoa(a.blockLen())
+}
+
+func (a *App) gotoBlock(delta int) {
+	a.song.mu.Lock()
+	n := len(a.song.Blocks)
+	a.song.mu.Unlock()
+	a.ed.editBlock = wrap(a.ed.editBlock+delta, n)
+	a.player.setEditBlock(a.ed.editBlock)
+	a.resetCursorToBlock()
+}
+
+// --- arrangement block operations (toolbar + keys) ---
+
+func (a *App) arrAddCurrent() {
+	a.song.mu.Lock()
+	at := a.ed.arrCursor + 1
+	if len(a.song.Arrangement) == 0 {
+		at = 0
+	}
+	a.song.arrInsert(at, a.ed.editBlock)
+	a.ed.arrCursor = clampInt(at, 0, len(a.song.Arrangement)-1)
+	a.song.mu.Unlock()
+	a.ed.status = "Added block to arrangement"
+}
+
+func (a *App) arrRemoveSel() {
+	lo, hi := a.ed.selRange()
+	a.song.mu.Lock()
+	a.song.arrDelete(lo, hi)
+	n := len(a.song.Arrangement)
+	a.song.mu.Unlock()
+	a.ed.arrCursor = clampInt(lo, 0, max(0, n-1))
+	a.ed.selActive = false
+	a.ed.status = "Removed arrangement slot(s)"
+}
+
+func (a *App) arrCut() {
+	a.copyArr()
+	a.arrRemoveSel()
+	a.ed.status = "Cut arrangement slot(s)"
 }
 
 // --- punch-in from MIDI input (called on the UI goroutine via channel) ---

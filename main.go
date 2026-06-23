@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	gc "github.com/rthornton128/goncurses"
 )
@@ -51,7 +52,7 @@ func run() error {
 	gc.CBreak(true)
 	gc.Cursor(0)
 	stdscr.Keypad(true)
-	stdscr.Timeout(40) // ms; lets the UI refresh while idle
+	stdscr.Timeout(0) // non-blocking input; the loop paces its own frames
 	gc.MouseMask(gc.M_ALL, nil)
 	if gc.HasColors() {
 		initColors()
@@ -88,9 +89,36 @@ func run() error {
 	return nil
 }
 
+// frameInterval is the UI redraw cadence (~30 fps). Rendering runs on this
+// fixed schedule independent of how fast the user types, so a flood of input
+// can never stall the display — and because draw() only holds the song lock
+// for a brief snapshot copy, it never disturbs the playback goroutine either.
+const frameInterval = 33 * time.Millisecond
+
 func (a *App) loop() {
 	for {
-		// Drain any punched-in notes.
+		start := time.Now()
+
+		// Drain pending input without blocking. Bounded per frame so a key
+		// auto-repeat flood can't starve rendering; leftovers wait one frame.
+		for i := 0; i < 128; i++ {
+			ch := a.win.GetChar()
+			if ch == 0 {
+				break
+			}
+			switch {
+			case ch == gc.KEY_MOUSE:
+				a.handleMouse()
+			case ch == gc.KEY_RESIZE:
+				// next draw() re-reads MaxYX
+			default:
+				if !a.handleKey(ch) {
+					return
+				}
+			}
+		}
+
+		// Drain punched-in MIDI notes.
 		for {
 			select {
 			case ev := <-a.midiIn:
@@ -103,18 +131,8 @@ func (a *App) loop() {
 
 		a.draw()
 
-		ch := a.win.GetChar()
-		switch {
-		case ch == 0:
-			// timeout: just refresh (keeps the playhead moving on screen)
-		case ch == gc.KEY_MOUSE:
-			a.handleMouse()
-		case ch == gc.KEY_RESIZE:
-			// next draw() re-reads MaxYX
-		default:
-			if !a.handleKey(ch) {
-				return
-			}
+		if d := frameInterval - time.Since(start); d > 0 {
+			time.Sleep(d)
 		}
 	}
 }

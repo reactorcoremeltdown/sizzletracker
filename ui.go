@@ -51,10 +51,14 @@ func (a *App) put(y, x int, s string, pair int16, attr gc.Char) {
 	a.win.AttrOff(full)
 }
 
-// Layout constants for the tracker grid.
+// Layout constants.
 const (
-	gutterW    = 5  // "000 |"
-	trackWidth = 10 // "C-4 7F 02 "
+	gutterW    = 5 // "000 |"
+	trackWidth = 10
+	// Fixed height of the lower (arrangement) segment: toolbar + label +
+	// several block rows. The tracker takes all remaining vertical space.
+	arrangeDesiredH = 8
+	minTrackerH     = 5
 )
 
 // Simple ASCII transport glyphs (single-cell, width == byte length).
@@ -62,10 +66,112 @@ const (
 	glyphPlay  = "|>"
 	glyphStop  = "[]"
 	glyphRec   = "()"
-	glyphLoop  = "<>" // song-loop (range)
-	glyphLoop1 = "@@" // block-loop (repeat one)
+	glyphLoop  = "<>"
+	glyphLoop1 = "@@"
 	glyphPanic = "!!"
 )
+
+// --- per-frame snapshot --------------------------------------------------
+//
+// The renderer copies everything it needs out of the shared Song under a
+// single short lock, then draws from the copy. This keeps song.mu contention
+// with the playback goroutine to a brief memcpy, so MIDI timing and the UI
+// stay smooth regardless of how much the user is typing.
+
+type trackView struct {
+	name    string
+	channel int
+	steps   []Step
+}
+
+type blockView struct {
+	name   string
+	length int
+	tracks []trackView
+}
+
+type frame struct {
+	bpm float64
+	sig TimeSig
+	tpb int
+
+	numBlocks  int
+	blockNames []string
+	blockLens  []int
+	arrange    []int
+
+	edit blockView // the block under the tracker cursor
+
+	// transport
+	playBlk, playTick, arrPos int
+	playing                   bool
+	loop                      LoopMode
+
+	// timing (one pass, no repeat)
+	songTicks    int
+	elapsedTicks int
+	spt          float64
+}
+
+func (a *App) snapshot() *frame {
+	s := a.song
+	s.mu.Lock()
+
+	if a.ed.editBlock >= len(s.Blocks) {
+		a.ed.editBlock = len(s.Blocks) - 1
+	}
+	if a.ed.editBlock < 0 {
+		a.ed.editBlock = 0
+	}
+
+	fr := &frame{
+		bpm:       s.BPM,
+		sig:       s.Sig,
+		tpb:       s.TicksPerBeat,
+		numBlocks: len(s.Blocks),
+		arrange:   append([]int(nil), s.Arrangement...),
+		songTicks: s.totalTicks(),
+		spt:       s.secondsPerTick(),
+	}
+	for _, b := range s.Blocks {
+		fr.blockNames = append(fr.blockNames, b.Name)
+		fr.blockLens = append(fr.blockLens, b.Length)
+	}
+	blk := s.Blocks[a.ed.editBlock]
+	ev := blockView{name: blk.Name, length: blk.Length}
+	for _, t := range blk.Tracks {
+		ev.tracks = append(ev.tracks, trackView{
+			name:    t.name(),
+			channel: t.Channel,
+			steps:   append([]Step(nil), t.Steps...),
+		})
+	}
+	fr.edit = ev
+	s.mu.Unlock()
+
+	fr.playBlk, fr.playTick, fr.arrPos, fr.playing, fr.loop = a.player.state()
+
+	// Elapsed ticks for the playback-time display.
+	if fr.playing {
+		if fr.loop == LoopSong {
+			for i := 0; i < fr.arrPos && i < len(fr.arrange); i++ {
+				bi := fr.arrange[i]
+				if bi >= 0 && bi < len(fr.blockLens) {
+					fr.elapsedTicks += fr.blockLens[bi]
+				}
+			}
+			fr.elapsedTicks += fr.playTick
+		} else {
+			fr.elapsedTicks = fr.playTick
+		}
+	}
+	return fr
+}
+
+// name returns a track's display name (helper so snapshot can read it).
+func (t *Track) name() string { return t.Name }
+
+// --- draw ----------------------------------------------------------------
 
 func (a *App) draw() {
 	a.win.Erase()
@@ -78,109 +184,40 @@ func (a *App) draw() {
 		return
 	}
 
-	topH := 1
-	statusH := 1
-	bodyH := h - topH - statusH
-	trackerH := bodyH * 6 / 10
-	if trackerH < 4 {
-		trackerH = 4
-	}
-	arrangeY := topH + trackerH
-	arrangeH := h - statusH - arrangeY
+	fr := a.snapshot()
 
-	a.drawTopBar(0, w)
-	a.drawTracker(topH, trackerH, w)
-	a.drawArrange(arrangeY, arrangeH, w)
+	topH, statusH := 1, 1
+	lowerH := lowerHeight(h)
+	trackerY := topH
+	trackerH := h - topH - statusH - lowerH
+	arrangeY := topH + trackerH
+
+	a.drawTopBar(0, w, fr)
+	a.drawTracker(trackerY, trackerH, w, fr)
+	a.drawArrange(arrangeY, lowerH, w, fr)
 	a.drawStatus(h-1, w)
 
 	if a.ed.showHelp {
 		a.drawHelp(h, w)
 	}
-
 	a.win.Refresh()
 }
 
-// helpLines is the content of the F1 help overlay. Empty strings are spacers;
-// lines beginning with "# " are section headers.
-var helpLines = []string{
-	"# Transport (top bar)",
-	"  |>  play/stop      []  stop        ()  record-arm",
-	"  <>  loop song      @@  loop block  !!  panic (all notes off)",
-	"",
-	"# Global",
-	"  Space  play/stop        Tab    switch tracker/arrange",
-	"  F1     this help         F2/F3  focus tracker/arrange",
-	"  F5     record-arm        F6     loop mode (song/block)",
-	"  F7     follow playhead    F8     panic       F9  edit BPM",
-	"  F10    quit",
-	"",
-	"# Tracker (upper half)",
-	"  Arrows      move cursor (left/right cross columns/tracks)",
-	"  Shift+L/R   previous/next track",
-	"  PgUp/PgDn   jump one beat       Home/End  top/bottom",
-	"  [ / ]       previous/next block to edit",
-	"  z s x ...m  notes (lower octave)",
-	"  q 2 w ...i  notes (upper octave)",
-	"  `  (backtick)   NOTE-OFF  (note sustains until this or a new note)",
-	"  . / Del     clear cell        Backspace  clear + step back",
-	"  - / =       octave down/up",
-	"  vel column: hex 0-9 a-f     chan column: digits 1-16",
-	"  +trk / -trk header buttons add / delete the cursor track",
-	"",
-	"# Arrangement (lower half)",
-	"  Left/Right  move slot      Shift+L/R  extend selection",
-	"  Up/Down     cycle slot's block      Enter  edit that block",
-	"  i/Ins insert  a append  x/Del delete  c copy  v paste",
-	"  , / .  move selection      n new block  d duplicate  D remove",
-	"",
-	"# Live punch-in (MIDI input)",
-	"  Click 'In:' to pick a controller, arm record (F5/()).",
-	"  While playing, note-on/off from the controller are recorded",
-	"  as notes and note-offs at the playhead on the cursor track.",
-	"",
-	"  Mouse: click buttons & cells; right-click cell/slot to clear;",
-	"  shift-click slots to select; double-click a slot to edit it.",
-	"",
-	"  Press any key to close this help.",
+// lowerHeight returns the fixed height of the arrangement segment, shrinking
+// only when the terminal is too short to give the tracker its minimum.
+func lowerHeight(h int) int {
+	want := arrangeDesiredH
+	maxLower := h - 1 - 1 - minTrackerH
+	if want > maxLower {
+		want = maxLower
+	}
+	if want < 3 {
+		want = 3
+	}
+	return want
 }
 
-func (a *App) drawHelp(h, w int) {
-	bw := 66
-	if bw > w-2 {
-		bw = w - 2
-	}
-	bh := len(helpLines) + 2
-	if bh > h-2 {
-		bh = h - 2
-	}
-	x0 := (w - bw) / 2
-	y0 := (h - bh) / 2
-
-	// Box body + border.
-	for r := 0; r < bh; r++ {
-		a.put(y0+r, x0, strings.Repeat(" ", bw), pHeader, 0)
-	}
-	title := " sizzletracker — keys (F1) "
-	a.put(y0, x0, strings.Repeat("─", bw), pHeader, gc.A_BOLD)
-	a.put(y0, x0+(bw-len(title))/2, title, pHeader, gc.A_BOLD)
-
-	for i, line := range helpLines {
-		ry := y0 + 1 + i
-		if ry >= y0+bh-1 {
-			break
-		}
-		attr := gc.Char(0)
-		if strings.HasPrefix(line, "# ") {
-			line = line[2:]
-			attr = gc.A_BOLD
-		}
-		// Uniform black-on-cyan panel so every row matches the border.
-		a.put(ry, x0+1, fmt.Sprintf("%-*.*s", bw-2, bw-2, trunc(line, bw-2)), pHeader, attr)
-	}
-	a.put(y0+bh-1, x0, strings.Repeat("─", bw), pHeader, gc.A_BOLD)
-}
-
-// --- Top bar ---------------------------------------------------------------
+// --- Top bar -------------------------------------------------------------
 
 func (a *App) button(y, x int, label string, on bool, act RegionAction) int {
 	txt := " " + label + " "
@@ -193,33 +230,25 @@ func (a *App) button(y, x int, label string, on bool, act RegionAction) int {
 	return x + len(txt) + 1
 }
 
-func (a *App) drawTopBar(y, w int) {
-	// Background bar.
+func (a *App) drawTopBar(y, w int, fr *frame) {
 	a.put(y, 0, strings.Repeat(" ", w), pHeader, 0)
 
-	playing := a.player.isPlaying()
 	x := 1
 	a.put(y, x, "SIZZLE", pHeader, gc.A_BOLD)
 	x += 7
 
-	x = a.button(y, x, glyphPlay, playing, ActPlay)
+	x = a.button(y, x, glyphPlay, fr.playing, ActPlay)
 	x = a.button(y, x, glyphStop, false, ActStop)
 	x = a.button(y, x, glyphRec, a.ed.armed, ActRecord)
 
 	loopGlyph := glyphLoop
-	if a.player.loopMode() == LoopBlock {
+	if fr.loop == LoopBlock {
 		loopGlyph = glyphLoop1
 	}
-	x = a.button(y, x, loopGlyph, a.player.loopMode() == LoopBlock, ActLoopMode)
+	x = a.button(y, x, loopGlyph, fr.loop == LoopBlock, ActLoopMode)
 	x = a.button(y, x, glyphPanic, false, ActPanic)
 
-	// BPM field.
-	a.song.mu.Lock()
-	bpm := a.song.BPM
-	sig := a.song.Sig
-	a.song.mu.Unlock()
-
-	bpmTxt := fmt.Sprintf("%.1f", bpm)
+	bpmTxt := fmt.Sprintf("%.1f", fr.bpm)
 	if a.ed.focus == FocusBPM {
 		bpmTxt = a.ed.bpmBuf + "_"
 	}
@@ -232,12 +261,12 @@ func (a *App) drawTopBar(y, w int) {
 	a.ed.addRegion(Region{x: x, y: y, w: len(lbl), h: 1, action: ActBPM})
 	x += len(lbl) + 1
 
-	sigTxt := " Sig:" + sig.String() + " "
+	sigTxt := " Sig:" + fr.sig.String() + " "
 	a.put(y, x, sigTxt, pBtn, gc.A_BOLD)
 	a.ed.addRegion(Region{x: x, y: y, w: len(sigTxt), h: 1, action: ActTimeSig})
 	x += len(sigTxt) + 1
 
-	out := " Out:" + trunc(a.midi.OutName(), 18) + " "
+	out := " Out:" + trunc(a.midi.OutName(), 16) + " "
 	a.put(y, x, out, pBtn, gc.A_BOLD)
 	a.ed.addRegion(Region{x: x, y: y, w: len(out), h: 1, action: ActMidiOut})
 	x += len(out) + 1
@@ -247,30 +276,28 @@ func (a *App) drawTopBar(y, w int) {
 	if inName != "<off>" {
 		inPair = pBtnOn
 	}
-	in := " In:" + trunc(inName, 16) + " "
+	in := " In:" + trunc(inName, 14) + " "
 	a.put(y, x, in, inPair, gc.A_BOLD)
 	a.ed.addRegion(Region{x: x, y: y, w: len(in), h: 1, action: ActMidiIn})
 }
 
-// --- Tracker (upper half) --------------------------------------------------
+// --- Tracker (upper) -----------------------------------------------------
 
-func (a *App) drawTracker(top, height, w int) {
-	a.song.mu.Lock()
-	defer a.song.mu.Unlock()
-
-	if a.ed.editBlock >= len(a.song.Blocks) {
-		a.ed.editBlock = len(a.song.Blocks) - 1
+func (a *App) drawTracker(top, height, w int, fr *frame) {
+	if height < 3 {
+		return
 	}
-	blk := a.song.Blocks[a.ed.editBlock]
-	a.ed.curTrack = clampInt(a.ed.curTrack, 0, len(blk.Tracks)-1)
-	a.ed.curTick = clampInt(a.ed.curTick, 0, blk.Length-1)
+	be := &fr.edit
+	a.ed.curTrack = clampInt(a.ed.curTrack, 0, len(be.tracks)-1)
+	a.ed.curTick = clampInt(a.ed.curTick, 0, be.length-1)
 
-	tpb := a.song.TicksPerBeat
-	tpbar := a.song.ticksPerBar()
+	a.drawTrackerControls(top, w, fr)
 
-	playBlk, playTick, playing := a.player.playhead()
+	hdrY := top + 1
+	stepsTop := top + 2
+	stepsH := height - 2
 
-	// Horizontal scroll so the cursor track is visible.
+	// Horizontal track scroll.
 	visTracks := (w - gutterW) / trackWidth
 	if visTracks < 1 {
 		visTracks = 1
@@ -282,61 +309,31 @@ func (a *App) drawTracker(top, height, w int) {
 		a.ed.trackScroll = a.ed.curTrack - visTracks + 1
 	}
 
-	// Header row: block name + per-track names/channels.
-	hdr := top
-	title := fmt.Sprintf("BLK %s [%d/%d] len %d  oct%d step%d",
-		blk.Name, a.ed.editBlock+1, len(a.song.Blocks), blk.Length, a.ed.octave, a.ed.step)
-	a.put(hdr, 0, title, pAccent, gc.A_BOLD)
-
-	stepsTop := top + 1
-	stepsH := height - 1
-
 	// Track column headers.
-	for ti := a.ed.trackScroll; ti < len(blk.Tracks) && ti < a.ed.trackScroll+visTracks; ti++ {
-		t := blk.Tracks[ti]
+	for ti := a.ed.trackScroll; ti < len(be.tracks) && ti < a.ed.trackScroll+visTracks; ti++ {
+		t := be.tracks[ti]
 		cx := gutterW + (ti-a.ed.trackScroll)*trackWidth
-		label := fmt.Sprintf("%-6.6s c%02d", t.Name, t.Channel+1)
+		label := fmt.Sprintf("%-6.6s c%02d", t.name, t.channel+1)
 		pair := pHeader
 		if ti == a.ed.curTrack && a.ed.focus == FocusTracker {
 			pair = pBtnOn
 		}
-		a.put(hdr, cx, fmt.Sprintf("%-*.*s", trackWidth, trackWidth, label), pair, 0)
-	}
-	// "+track" / "-track" affordances at far right of header.
-	addX := gutterW + (min(len(blk.Tracks), a.ed.trackScroll+visTracks)-a.ed.trackScroll)*trackWidth
-	if addX+6 < w {
-		a.put(hdr, addX, " +trk ", pBtn, 0)
-		a.ed.addRegion(Region{x: addX, y: hdr, w: 6, h: 1, action: ActAddTrack})
-		delX := addX + 7
-		if delX+6 < w && len(blk.Tracks) > 1 {
-			a.put(hdr, delX, " -trk ", pArm, 0)
-			a.ed.addRegion(Region{x: delX, y: hdr, w: 6, h: 1, action: ActDelTrack, data1: a.ed.curTrack})
-		}
+		a.put(hdrY, cx, fmt.Sprintf("%-*.*s", trackWidth, trackWidth, label), pair, 0)
 	}
 
-	// Vertical scroll: center the active row (playhead when following, else cursor).
-	center := a.ed.curTick
-	if playing && a.ed.follow && playBlk == a.ed.editBlock {
-		center = playTick
-	}
-	first := center - stepsH/2
-	if first > blk.Length-stepsH {
-		first = blk.Length - stepsH
-	}
-	if first < 0 {
-		first = 0
-	}
+	// Vertical scroll offset.
+	a.computeTickScroll(be.length, stepsH, fr)
+	first := a.ed.tickScroll
 
 	for row := 0; row < stepsH; row++ {
 		tick := first + row
 		y := stepsTop + row
-		if tick >= blk.Length {
+		if tick >= be.length {
 			break
 		}
 
-		// Row classification for interlaced colouring.
-		isBar := tick%tpbar == 0
-		isBeat := tick%tpb == 0
+		isBar := tick%a.songTicksPerBar(fr) == 0
+		isBeat := tick%fr.tpb == 0
 		rowPair := pNormal
 		rowAttr := gc.Char(0)
 		switch {
@@ -346,14 +343,13 @@ func (a *App) drawTracker(top, height, w int) {
 		case isBeat:
 			rowPair = pBeat
 		default:
-			if (tick/1)%2 == 0 {
+			if tick%2 == 0 {
 				rowAttr = gc.A_DIM
 			}
 		}
 
-		isPlay := playing && playBlk == a.ed.editBlock && tick == playTick
+		isPlay := fr.playing && fr.playBlk == a.ed.editBlock && tick == fr.playTick
 
-		// Gutter (row number).
 		gut := fmt.Sprintf("%03d", tick)
 		gp := rowPair
 		if isPlay {
@@ -362,16 +358,12 @@ func (a *App) drawTracker(top, height, w int) {
 		a.put(y, 0, gut, gp, rowAttr|gc.A_BOLD)
 		a.put(y, 3, " |", pDim, gc.A_DIM)
 
-		for ti := a.ed.trackScroll; ti < len(blk.Tracks) && ti < a.ed.trackScroll+visTracks; ti++ {
-			t := blk.Tracks[ti]
-			st := t.Steps[tick]
+		for ti := a.ed.trackScroll; ti < len(be.tracks) && ti < a.ed.trackScroll+visTracks; ti++ {
+			t := be.tracks[ti]
+			st := t.steps[tick]
 			cx := gutterW + (ti-a.ed.trackScroll)*trackWidth
 
-			note := noteName(st.Note)
-			vel := velName(st.Vel)
-			chn := chanName(st.Chan)
-
-			cells := []string{note, vel, chn}
+			cells := []string{noteName(st.Note), velName(st.Vel), chanName(st.Chan)}
 			offs := []int{0, 4, 7}
 			widths := []int{3, 2, 2}
 
@@ -389,7 +381,6 @@ func (a *App) drawTracker(top, height, w int) {
 					cellPair = pCursor
 					cellAttr = gc.A_BOLD
 				}
-				// Dim empty values.
 				if !isCur && !isPlay && (cell == "---" || cell == "..") {
 					cellAttr |= gc.A_DIM
 				}
@@ -401,77 +392,155 @@ func (a *App) drawTracker(top, height, w int) {
 	}
 }
 
-// --- Arrangement (lower half) ----------------------------------------------
+func (a *App) songTicksPerBar(fr *frame) int {
+	n := fr.tpb * fr.sig.Num
+	if n < 1 {
+		return 1
+	}
+	return n
+}
 
-func (a *App) drawArrange(top, height, w int) {
+// computeTickScroll updates the vertical scroll offset so the active row stays
+// visible. When the block fits it shows everything from the top; otherwise it
+// follows the playhead (when playing) or edge-scrolls with the cursor.
+func (a *App) computeTickScroll(length, stepsH int, fr *frame) {
+	if stepsH < 1 {
+		stepsH = 1
+	}
+	maxScroll := length - stepsH
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if fr.playing && a.ed.follow && fr.playBlk == a.ed.editBlock {
+		a.ed.tickScroll = fr.playTick - stepsH/2
+	} else {
+		margin := 2
+		if margin > stepsH/2 {
+			margin = stepsH / 2
+		}
+		if a.ed.curTick < a.ed.tickScroll+margin {
+			a.ed.tickScroll = a.ed.curTick - margin
+		}
+		if a.ed.curTick > a.ed.tickScroll+stepsH-1-margin {
+			a.ed.tickScroll = a.ed.curTick - stepsH + 1 + margin
+		}
+	}
+	a.ed.tickScroll = clampInt(a.ed.tickScroll, 0, maxScroll)
+}
+
+// drawTrackerControls renders the interactive controls row: block navigation,
+// block length (- / field / +), octave/step, and add/remove track.
+func (a *App) drawTrackerControls(y, w int, fr *frame) {
+	x := 0
+	title := fmt.Sprintf("BLK %s [%d/%d]", fr.edit.name, a.ed.editBlock+1, fr.numBlocks)
+	a.put(y, x, title, pAccent, gc.A_BOLD)
+	x += len(title) + 1
+
+	x = a.button(y, x, "<", false, ActBlockPrev)
+	x = a.button(y, x, ">", false, ActBlockNext)
+
+	a.put(y, x, " len ", pDim, 0)
+	x += 5
+	x = a.button(y, x, "-", false, ActLenHalf)
+
+	lenTxt := fmt.Sprintf("%4d", fr.edit.length)
+	lenPair := pBtn
+	if a.ed.focus == FocusLen {
+		lenTxt = fmt.Sprintf("%-4.4s", a.ed.lenBuf+"_")
+		lenPair = pBtnOn
+	}
+	field := " " + lenTxt + " "
+	a.put(y, x, field, lenPair, gc.A_BOLD)
+	a.ed.addRegion(Region{x: x, y: y, w: len(field), h: 1, action: ActLenField})
+	x += len(field) + 1
+	x = a.button(y, x, "+", false, ActLenDouble)
+
+	info := fmt.Sprintf(" oct%d step%d", a.ed.octave, a.ed.step)
+	a.put(y, x, info, pDim, 0)
+	x += len(info) + 2
+
+	// Add / remove track on the right if there is room.
+	right := w - 16
+	if x < right {
+		rx := right
+		rx = a.button(y, rx, "+trk", false, ActAddTrack)
+		if len(fr.edit.tracks) > 1 {
+			a.button(y, rx, "-trk", false, ActDelTrack)
+		}
+	}
+}
+
+// --- Arrangement (lower) -------------------------------------------------
+
+func (a *App) drawArrange(top, height, w int, fr *frame) {
 	if height < 2 {
 		return
 	}
-	a.song.mu.Lock()
-	defer a.song.mu.Unlock()
+	a.drawArrangeToolbar(top, w, fr)
 
-	playBlk, _, playing := a.player.playhead()
-	playArr := -1
-	a.player.mu.Lock()
-	if playing && a.player.loop == LoopSong {
-		playArr = a.player.arrPos
-	}
-	a.player.mu.Unlock()
-
-	// Header.
+	labelY := top + 1
 	focusTag := ""
 	if a.ed.focus == FocusArrange {
-		focusTag = "  [FOCUS]"
+		focusTag = "*"
 	}
-	a.put(top, 0, "ARRANGEMENT"+focusTag, pAccent, gc.A_BOLD)
+	a.put(labelY, 0, "ARR"+focusTag, pAccent, gc.A_BOLD)
 
-	// Palette of blocks (clickable to append/pick).
-	px := 14
-	for i, b := range a.song.Blocks {
-		lbl := fmt.Sprintf("[%s]", b.Name)
+	// Palette of blocks.
+	px := 5
+	for i, name := range fr.blockNames {
+		lbl := fmt.Sprintf("[%s]", name)
 		pair := pBtn
 		if i == a.ed.editBlock {
 			pair = pBtnOn
 		}
-		a.put(top, px, lbl, pair, gc.A_BOLD)
-		a.ed.addRegion(Region{x: px, y: top, w: len(lbl), h: 1, action: ActBlockPick, data1: i})
-		px += len(lbl) + 1
-		if px > w-6 {
+		if px+len(lbl) > w-22 {
+			a.put(labelY, px, "…", pDim, 0)
 			break
 		}
+		a.put(labelY, px, lbl, pair, gc.A_BOLD)
+		a.ed.addRegion(Region{x: px, y: labelY, w: len(lbl), h: 1, action: ActBlockPick, data1: i})
+		px += len(lbl) + 1
 	}
 
-	// Arrangement slots, wrapped across the available rows.
-	a.ed.arrCursor = clampInt(a.ed.arrCursor, 0, max(0, len(a.song.Arrangement)-1))
-	selLo, selHi := a.ed.selRange()
+	// Position indicator, right-aligned on the label row.
+	pos := fmt.Sprintf("arr %d/%d  row %d", fr.arrPos+1, len(fr.arrange), fr.playTick)
+	if px < w-len(pos)-1 {
+		a.put(labelY, w-len(pos)-1, pos, pDim, 0)
+	}
 
-	slotW := 6 // "00:A "
+	// Slot grid.
+	a.ed.arrCursor = clampInt(a.ed.arrCursor, 0, max(0, len(fr.arrange)-1))
+	selLo, selHi := a.ed.selRange()
+	slotW := 6
 	perRow := (w - 2) / slotW
 	if perRow < 1 {
 		perRow = 1
 	}
-	gridTop := top + 1
-	rows := height - 1
+	gridTop := top + 2
+	rows := height - 2
 
-	for i, bi := range a.song.Arrangement {
+	playArr := -1
+	if fr.playing && fr.loop == LoopSong {
+		playArr = fr.arrPos
+	}
+
+	for i, bi := range fr.arrange {
 		r := i / perRow
 		c := i % perRow
 		if r >= rows {
 			break
 		}
 		x := 1 + c*slotW
-		y := gridTop + r
-
+		yy := gridTop + r
 		name := "?"
-		if bi >= 0 && bi < len(a.song.Blocks) {
-			name = a.song.Blocks[bi].Name
+		if bi >= 0 && bi < len(fr.blockNames) {
+			name = fr.blockNames[bi]
 		}
-		txt := fmt.Sprintf("%02d:%s", i, name)
-		txt = fmt.Sprintf("%-*.*s", slotW-1, slotW-1, txt)
+		txt := fmt.Sprintf("%-*.*s", slotW-1, slotW-1, fmt.Sprintf("%02d:%s", i, name))
 
 		pair := pNormal
 		attr := gc.Char(0)
-		if i >= selLo && i <= selHi && a.ed.selActive {
+		if a.ed.selActive && i >= selLo && i <= selHi {
 			pair = pSel
 		}
 		if i == a.ed.arrCursor && a.ed.focus == FocusArrange {
@@ -482,11 +551,27 @@ func (a *App) drawArrange(top, height, w int) {
 			pair = pPlayhead
 			attr = gc.A_BOLD
 		}
-		a.put(y, x, txt, pair, attr)
-		a.ed.addRegion(Region{x: x, y: y, w: slotW - 1, h: 1, action: ActArrSlot, data1: i})
+		a.put(yy, x, txt, pair, attr)
+		a.ed.addRegion(Region{x: x, y: yy, w: slotW - 1, h: 1, action: ActArrSlot, data1: i})
 	}
+}
 
-	_ = playBlk
+// drawArrangeToolbar renders the block-ops toolbar plus the song-time display.
+func (a *App) drawArrangeToolbar(y, w int, fr *frame) {
+	a.put(y, 0, strings.Repeat(" ", w), pHeader, 0)
+	x := 1
+	x = a.button(y, x, "Add", false, ActArrAdd)
+	x = a.button(y, x, "Remove", false, ActArrRemove)
+	x = a.button(y, x, "Cut", false, ActArrCut)
+	x = a.button(y, x, "Copy", false, ActArrCopy)
+	x = a.button(y, x, "Paste", false, ActArrPaste)
+
+	cur := formatClock(float64(fr.elapsedTicks) * fr.spt)
+	total := formatClock(float64(fr.songTicks) * fr.spt)
+	clk := fmt.Sprintf(" time %s / %s ", cur, total)
+	if x < w-len(clk)-1 {
+		a.put(y, w-len(clk)-1, clk, pHeader, gc.A_BOLD)
+	}
 }
 
 func (a *App) drawStatus(y, w int) {
@@ -494,7 +579,83 @@ func (a *App) drawStatus(y, w int) {
 	a.put(y, 1, trunc(a.ed.status, w-2), pHeader, 0)
 }
 
-// --- small helpers ---------------------------------------------------------
+// --- Help overlay --------------------------------------------------------
+
+var helpLines = []string{
+	"# Transport (top bar)",
+	"  |> play/stop   [] stop   () record-arm   <>/@@ loop   !! panic",
+	"  BPM / Sig / Out / In are clickable fields.",
+	"",
+	"# Global",
+	"  Space play/stop   Tab switch pane   F1 help   F2/F3 focus",
+	"  F5 record   F6 loop mode   F7 follow   F8 panic   F9 BPM   F10 quit",
+	"",
+	"# Tracker (upper half)",
+	"  Arrows move (L/R cross columns/tracks)   Shift+L/R change track",
+	"  PgUp/PgDn jump a beat   Home/End top/bottom",
+	"  [ / ] previous/next block      </> buttons also switch block",
+	"  len  - halves, + doubles, click the number to type a length",
+	"  z..m / q..i notes    ` note-off    . /Del clear    Bksp clear+back",
+	"  - / = octave down/up    +trk / -trk add/delete track",
+	"  Large blocks scroll vertically to keep the cursor/playhead in view.",
+	"",
+	"# Arrangement (lower half) — fixed-height segment",
+	"  Toolbar: Add Remove Cut Copy Paste (also mouse-clickable)",
+	"  Left/Right move   Shift+L/R select   Up/Down cycle block",
+	"  Enter edit block   i insert  a append  x delete  c copy  v paste",
+	"  , / . move selection   n new  d duplicate  D remove block",
+	"  Song time / position shown on the toolbar and label rows.",
+	"",
+	"# Live punch-in",
+	"  Pick 'In:', arm record (F5). Playing: controller note-on/off are",
+	"  recorded as notes and note-offs at the playhead on the cursor track.",
+	"",
+	"  Press any key to close this help.",
+}
+
+func (a *App) drawHelp(h, w int) {
+	bw := 70
+	if bw > w-2 {
+		bw = w - 2
+	}
+	bh := len(helpLines) + 2
+	if bh > h-2 {
+		bh = h - 2
+	}
+	x0 := (w - bw) / 2
+	y0 := (h - bh) / 2
+
+	for r := 0; r < bh; r++ {
+		a.put(y0+r, x0, strings.Repeat(" ", bw), pHeader, 0)
+	}
+	title := " sizzletracker — keys (F1) "
+	a.put(y0, x0, strings.Repeat("-", bw), pHeader, gc.A_BOLD)
+	a.put(y0, x0+(bw-len(title))/2, title, pHeader, gc.A_BOLD)
+
+	for i, line := range helpLines {
+		ry := y0 + 1 + i
+		if ry >= y0+bh-1 {
+			break
+		}
+		attr := gc.Char(0)
+		if strings.HasPrefix(line, "# ") {
+			line = line[2:]
+			attr = gc.A_BOLD
+		}
+		a.put(ry, x0+1, fmt.Sprintf("%-*.*s", bw-2, bw-2, trunc(line, bw-2)), pHeader, attr)
+	}
+	a.put(y0+bh-1, x0, strings.Repeat("-", bw), pHeader, gc.A_BOLD)
+}
+
+// --- helpers -------------------------------------------------------------
+
+func formatClock(sec float64) string {
+	if sec < 0 {
+		sec = 0
+	}
+	total := int(sec + 0.5)
+	return fmt.Sprintf("%d:%02d", total/60, total%60)
+}
 
 func trunc(s string, n int) string {
 	if n < 0 {
