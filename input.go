@@ -36,9 +36,10 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 			a.ed.chanMenuOut = -1
 			return true
 		}
-		if a.ed.showSig || a.ed.showFile {
+		if a.ed.showSig || a.ed.showFile || a.ed.showStep {
 			a.ed.showSig = false
 			a.ed.showFile = false
+			a.ed.showStep = false
 			return true
 		}
 	}
@@ -814,6 +815,7 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	reg, ok := a.ed.hitTest(x, y)
 	if !ok {
 		a.ed.showSig = false
+		a.ed.showStep = false
 		a.ed.showFile = false
 		a.ed.chanMenuOut = -1
 		return
@@ -856,11 +858,23 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	case ActTimeSig:
 		a.ed.showSig = !a.ed.showSig
 		a.ed.showFile = false
+		a.ed.showStep = false
 	case ActSigOption:
 		a.selectSig(reg.data1)
+	case ActStepMenu:
+		a.ed.showStep = !a.ed.showStep
+		a.ed.showSig = false
+		a.ed.showFile = false
+	case ActStepOption:
+		if reg.data1 >= 0 && reg.data1 < len(stepOptions) {
+			a.ed.step = stepOptions[reg.data1]
+			a.ed.status = fmt.Sprintf("Punch-in line skip: %d", a.ed.step)
+		}
+		a.ed.showStep = false
 	case ActFileMenu:
 		a.ed.showFile = !a.ed.showFile
 		a.ed.showSig = false
+		a.ed.showStep = false
 	case ActFileOption:
 		a.fileOption(reg.data1)
 	case ActTabEdit:
@@ -966,6 +980,9 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	// A click that is not on a menu (or its toggle) dismisses the dropdowns.
 	if reg.action != ActSigOption && reg.action != ActTimeSig {
 		a.ed.showSig = false
+	}
+	if reg.action != ActStepOption && reg.action != ActStepMenu {
+		a.ed.showStep = false
 	}
 	if reg.action != ActFileOption && reg.action != ActFileMenu {
 		a.ed.showFile = false

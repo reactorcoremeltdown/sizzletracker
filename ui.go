@@ -221,6 +221,9 @@ func (a *App) draw() {
 	if a.ed.showSig {
 		a.drawSigDropdown(fr)
 	}
+	if a.ed.showStep {
+		a.drawStepDropdown()
+	}
 	if a.ed.showFile {
 		a.drawFileDropdown()
 	}
@@ -509,6 +512,15 @@ func (a *App) drawTopBar(y, w int, fr *frame) {
 	}
 	sigTxt := " Sig:" + fr.sig.String() + " v "
 	x = a.putRegion(y, x, sigTxt, sigSty, ActTimeSig)
+
+	// Step (line skip after a punched-in note).
+	a.ed.stepX = x
+	stepSty := styBtn
+	if a.ed.showStep {
+		stepSty = styBtnOn
+	}
+	stepTxt := fmt.Sprintf(" Step:%d v ", a.ed.step)
+	x = a.putRegion(y, x, stepTxt, stepSty, ActStepMenu)
 
 	// View tabs (replace the old MIDI out/in fields).
 	x = a.button(y, x, "Edit", a.ed.view == ViewEdit, ActTabEdit)
@@ -838,6 +850,24 @@ func (a *App) drawSigDropdown(fr *frame) {
 		y := 1 + i
 		a.put(y, x0, lbl, sty)
 		a.ed.addRegion(Region{x: x0, y: y, w: cellWidth(lbl), h: 1, action: ActSigOption, data1: i})
+	}
+}
+
+// stepOptions are the selectable line-skip amounts for punch-in note entry.
+var stepOptions = []int{0, 1, 2, 3, 4, 6, 8, 12, 16}
+
+// drawStepDropdown renders the line-skip menu under the Step field.
+func (a *App) drawStepDropdown() {
+	x0 := a.ed.stepX
+	for i, s := range stepOptions {
+		lbl := fmt.Sprintf(" %2d ", s)
+		sty := styBtn
+		if s == a.ed.step {
+			sty = styBtnOn
+		}
+		y := 1 + i
+		a.put(y, x0, lbl, sty)
+		a.ed.addRegion(Region{x: x0, y: y, w: cellWidth(lbl), h: 1, action: ActStepOption, data1: i})
 	}
 }
 

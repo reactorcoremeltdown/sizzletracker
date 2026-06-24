@@ -50,6 +50,8 @@ const (
 	ActBPM
 	ActTimeSig    // open the time-signature dropdown
 	ActSigOption  // data1=index into timeSigs
+	ActStepMenu   // open the line-skip dropdown
+	ActStepOption // data1=index into stepOptions
 	ActFileMenu   // open the File dropdown
 	ActFileOption // data1=index into fileMenu
 	ActTabEdit    // switch to the editor view
@@ -131,6 +133,8 @@ type Editor struct {
 	showHelp bool
 	showSig  bool
 	sigX     int // x of the Sig field (so the dropdown can align under it)
+	showStep bool
+	stepX    int // x of the Step field
 	showFile bool
 	fileX    int // x of the File menu (for dropdown alignment)
 
