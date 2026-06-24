@@ -43,8 +43,11 @@ type App struct {
 	recPath string
 
 	// Previous mouse button mask, for detecting press/drag/release transitions
-	// (tcell delivers raw button-state snapshots).
-	prevBtn tcell.ButtonMask
+	// (tcell delivers raw button-state snapshots), plus double-click tracking.
+	prevBtn     tcell.ButtonMask
+	lastClickAt time.Time
+	lastClickX  int
+	lastClickY  int
 
 	// Piano-roll drag-select state.
 	rollDrag  bool
@@ -64,6 +67,10 @@ type App struct {
 	// quit is set by the File > Exit menu item to end the event loop.
 	quit bool
 }
+
+// dblClickWindow is how close two clicks at the same cell must be to count as
+// a double-click.
+const dblClickWindow = 400 * time.Millisecond
 
 // frameInterval bounds the UI redraw cadence. The event loop redraws on every
 // event and on each tick of this interval, so the playhead keeps moving on

@@ -40,13 +40,20 @@ ncurses, with live pattern editing for MIDI "looping".
   Placing a block paints a whole bar's worth of markers; you can erase
   individual beats. The playhead scans **left → right**. Blocks interlace
   vertically and bars interlace horizontally (gridlines every 4 beats).
+  **Double-click** toggles one beat, **right-click** toggles a whole bar, and
   **Cut / Copy / Paste** act on a rectangular marker selection (drag or
   shift+arrows to select; paste lands with its top-left at the cursor).
   **Add / Remove** add a block row below / remove the selected one. A
   song-time and bar-count readout is shown on the toolbar. **Drag the
   separator bar** between the tracker and the roll to resize the two panes.
+* **Song / loop playback.** With looping **off** ("song" mode) the roll plays
+  once to the last marked beat and stops. With looping **on** it loops a bar
+  region — select bars in the roll and press `l` to set the region (its bar
+  numbers turn red; first bar by default). Toggling the mode while playing
+  finishes the current block before switching (no abrupt jump). The Tracker
+  source also emits MIDI clock + start/stop to its patched outputs.
 * **Transport in the top bar** with glyph buttons — `▶` play, `■` stop,
-  `●` record-arm, `⟲`/`⟳` loop song/block, `⚠` panic — plus an editable
+  `●` record-arm, `⟲`/`⟳` song/loop mode, `⚠` panic — plus an editable
   **BPM** field, a **time-signature dropdown** (3/4, 4/4, 5/4), and **Edit /
   Patchbay** view tabs.
 * **MIDI patchbay** (the **Patchbay** tab, or `F4`). A routing matrix where
@@ -64,9 +71,8 @@ ncurses, with live pattern editing for MIDI "looping".
   command-line flags `-load` and `-export`.
 * **F1 help overlay** listing every hotkey; any key or click dismisses it.
 * **Live editing while playing.** Edits to the model are picked up by the
-  playback engine on the next tick, so you can build loops in real time.
-  Set **Loop:Block** to repeat the edited block indefinitely for live
-  looping.
+  playback engine on the next tick, so you can build loops in real time
+  (use loop mode over a one- or two-bar region for live looping).
 * **MIDI punch-in with note length.** Arm record (`●` / `F5`) and play any
   connected controller. When **playing**, controller note-on writes a note at
   the playhead and the matching **note-off** writes a NOTE-OFF event — so the
@@ -167,8 +173,8 @@ Application state lives in the per-user config directory each OS expects
 
 It contains:
 
-- **`config.json`** — preferences saved on exit: the selected MIDI out/in
-  ports (reconnected by name next launch), the tracker/roll pane split, and
+- **`config.json`** — preferences saved on exit: the patchbay routing and
+  channel filters (restored by device name), the tracker/roll pane split, and
   the last project path.
 - **`recovery.sng`** — the working song, **autosaved every 10 s and on exit**.
   On the next launch (when no file is given with `-load`) it is restored
@@ -185,7 +191,7 @@ Global:
 | `Tab` | Toggle focus tracker ↔ arrangement |
 | `F2` / `F3` | Focus tracker / arrangement |
 | `F5` | Toggle record-arm (punch-in) |
-| `F6` | Toggle loop mode (Song ↔ Block) |
+| `F6` | Toggle loop mode (Song = play once / Loop = loop region) |
 | `F7` | Toggle follow-playhead |
 | `F8` | Panic (all notes off) |
 | `F9` | Edit BPM field (type, `Enter` confirm, `Esc` cancel) |
@@ -229,7 +235,9 @@ Piano-roll focus (toolbar buttons: **Add Remove Cut Copy Paste**):
 | Arrows | Move the cursor (row = block, column = beat) |
 | `Shift`+Arrows | Extend the rectangular selection |
 | `Enter` / `p` | Place block (paint a bar-length run of markers) |
-| `.` | Toggle a single beat marker |
+| `.` | Toggle a single beat marker (or double-click) |
+| right-click | Toggle a whole bar |
+| `l` | Loop the selected bars (region; red bar numbers) |
 | `Del` / `Backspace` | Erase markers (cursor or selection) |
 | `c` / `x` / `v` | Copy / cut / paste markers (paste top-left at cursor) |
 | `a` | Add a block row below |

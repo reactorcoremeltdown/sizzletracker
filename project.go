@@ -129,6 +129,7 @@ func encodeProject(s *Song) string {
 	b.WriteString("version 1\n")
 	fmt.Fprintf(&b, "bpm %s\n", strconv.FormatFloat(s.BPM, 'f', -1, 64))
 	fmt.Fprintf(&b, "sig %d %d\n", s.Sig.Num, s.Sig.Den)
+	fmt.Fprintf(&b, "loop %d %d\n", s.LoopBar0, s.LoopBar1)
 	for i, blk := range s.Blocks {
 		fmt.Fprintf(&b, "\nblock %s %d %d\n", blk.Name, blk.Length, len(blk.Tracks))
 		fmt.Fprintf(&b, "roll %s\n", rollString(s.Roll[i]))
@@ -173,6 +174,11 @@ func decodeProject(r io.Reader) (*Song, error) {
 		case "sig":
 			if len(f) >= 3 {
 				s.Sig = TimeSig{atoiDef(f[1], 4), atoiDef(f[2], 4)}
+			}
+		case "loop":
+			if len(f) >= 3 {
+				s.LoopBar0 = atoiDef(f[1], 0)
+				s.LoopBar1 = atoiDef(f[2], 0)
 			}
 		case "block":
 			if len(f) < 3 {

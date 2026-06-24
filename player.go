@@ -9,8 +9,8 @@ import (
 type LoopMode int
 
 const (
-	LoopSong  LoopMode = iota // play the piano roll left-to-right, looping
-	LoopBlock                 // loop the currently edited block (live looping)
+	LoopSong   LoopMode = iota // play the roll once to the last marked beat, then stop
+	LoopRegion                 // loop the marked bar region
 )
 
 // held tracks a sounding note so it can be cut when a new note replaces it.
@@ -30,13 +30,18 @@ type Player struct {
 	mu       sync.Mutex
 	playing  bool
 	loop     LoopMode
-	pTick    int // global tick (song timeline) or tick within block (block loop)
-	playBeat int // current roll beat (song mode), -1 otherwise
+	pTick    int // global tick along the roll timeline
+	playBeat int // current roll beat
 	playBlk  int // block index currently sounding in the tracker view (-1 none)
 	playTick int // local tick within playBlk
 	held     map[*Track]held
 
-	editBlock int // block the user is editing; LoopBlock loops it
+	// pendingMode is a mode change requested while playing; it is applied at the
+	// next bar boundary so the current block finishes first (no abrupt jump).
+	pendingMode LoopMode
+	hasPending  bool
+
+	editBlock int // block the user is editing (for tracker playhead display)
 
 	stopCh chan struct{}
 }
@@ -65,24 +70,41 @@ func (p *Player) playhead() (block, tick int, playing bool) {
 	return p.playBlk, p.playTick, p.playing
 }
 
-// state is a consistent transport snapshot for the renderer.
+// state is a consistent transport snapshot for the renderer. The reported loop
+// is the *target* mode (a pending change shows immediately in the UI).
 func (p *Player) state() (beat, block, tick int, playing bool, loop LoopMode) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.playBeat, p.playBlk, p.playTick, p.playing, p.loop
+	return p.playBeat, p.playBlk, p.playTick, p.playing, p.effectiveLoopLocked()
 }
 
+func (p *Player) effectiveLoopLocked() LoopMode {
+	if p.hasPending {
+		return p.pendingMode
+	}
+	return p.loop
+}
+
+// setLoopMode changes the loop mode. While playing it is deferred to the next
+// bar boundary (the current block finishes first); while stopped it applies at
+// once. The playhead is never reset here, so toggling does not jump.
 func (p *Player) setLoopMode(m LoopMode) {
 	p.mu.Lock()
-	p.loop = m
-	p.pTick = 0
+	if p.playing {
+		p.pendingMode = m
+		p.hasPending = true
+	} else {
+		p.loop = m
+		p.hasPending = false
+	}
 	p.mu.Unlock()
 }
 
+// loopMode reports the target loop mode (pending change included).
 func (p *Player) loopMode() LoopMode {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.loop
+	return p.effectiveLoopLocked()
 }
 
 func (p *Player) setEditBlock(i int) {
@@ -199,12 +221,8 @@ func (p *Player) run(stop chan struct{}) {
 		ops = ops[:0]
 		p.song.mu.Lock()
 		p.mu.Lock()
-		var spt float64
-		if p.loop == LoopBlock {
-			ops, spt = p.stepBlockLoop(ops)
-		} else {
-			ops, spt = p.stepSongRoll(ops)
-		}
+		ops2, spt, done := p.stepRoll(ops)
+		ops = ops2
 		p.mu.Unlock()
 		p.song.mu.Unlock()
 
@@ -214,6 +232,11 @@ func (p *Player) run(stop chan struct{}) {
 			} else {
 				p.midi.noteOff(op.ch, op.note)
 			}
+		}
+
+		if done { // song reached its end -> stop the transport
+			p.stop()
+			return
 		}
 
 		if spt <= 0 { // nothing to play; idle without busy-spinning
@@ -240,59 +263,73 @@ func (p *Player) run(stop chan struct{}) {
 	}
 }
 
-// stepBlockLoop plays one tick of the edited block, looping. Caller holds both
-// locks.
-func (p *Player) stepBlockLoop(ops []midiOp) ([]midiOp, float64) {
-	s := p.song
-	if p.editBlock < 0 || p.editBlock >= len(s.Blocks) {
-		return ops, 0
-	}
-	blk := s.Blocks[p.editBlock]
-	if blk.Length == 0 {
-		return ops, 0
-	}
-	if p.pTick >= blk.Length {
-		p.pTick = 0
-	}
-	p.playBeat = -1
-	p.playBlk = p.editBlock
-	p.playTick = p.pTick
-	for _, t := range blk.Tracks {
-		if p.pTick < len(t.Steps) {
-			ops = p.applyStep(t, t.Steps[p.pTick], ops)
-		}
-	}
-	p.pTick++
-	if p.pTick >= blk.Length {
-		p.pTick = 0
-	}
-	return ops, s.secondsPerTick()
-}
-
-// stepSongRoll plays one tick of the piano roll. Caller holds both locks.
-func (p *Player) stepSongRoll(ops []midiOp) ([]midiOp, float64) {
+// stepRoll plays one tick of the piano roll. Returns the events to emit, the
+// seconds until the next tick, and whether the song has finished (song mode
+// reaching the end). Caller holds both locks.
+func (p *Player) stepRoll(ops []midiOp) ([]midiOp, float64, bool) {
 	s := p.song
 	tpb := s.ticksPerBeat()
-	totalBeats := s.totalBeats()
-	if totalBeats < 1 {
-		// Empty roll: keep the playhead parked and release any held notes.
+	barTicks := s.Sig.beatsPerBar() * tpb
+	if barTicks < 1 {
+		barTicks = 1
+	}
+
+	// Apply a deferred mode change at a bar boundary so the current block plays
+	// out before the new mode takes over.
+	if p.hasPending && p.pTick%barTicks == 0 {
+		p.loop = p.pendingMode
+		p.hasPending = false
+		if p.loop == LoopRegion {
+			lo, _ := s.loopRegionTicks()
+			p.pTick = lo // start the loop at the region's beginning
+		}
+	}
+
+	if p.loop == LoopRegion {
+		lo, hi := s.loopRegionTicks()
+		if hi <= lo {
+			lo, hi = 0, barTicks
+		}
+		if p.pTick < lo || p.pTick >= hi {
+			p.pTick = lo
+		}
+		ops = p.playAt(s, p.pTick, ops)
+		p.pTick++
+		if p.pTick >= hi {
+			p.pTick = lo
+		}
+		return ops, s.secondsPerTick(), false
+	}
+
+	// Song mode: play once to the last marked beat, then stop.
+	totalTicks := s.totalBeats() * tpb
+	if totalTicks < 1 {
+		// Nothing marked yet: idle (stay armed) until the user adds markers.
 		p.playBeat = 0
 		p.playBlk = -1
 		ops = p.releaseAll(ops)
-		return ops, 0
+		return ops, 0, false
 	}
-	totalTicks := totalBeats * tpb
 	if p.pTick >= totalTicks {
-		p.pTick = 0
+		ops = p.releaseAll(ops)
+		return ops, 0, true // reached the end
 	}
-	beat := p.pTick / tpb
-	sub := p.pTick % tpb
+	ops = p.playAt(s, p.pTick, ops)
+	p.pTick++
+	return ops, s.secondsPerTick(), false
+}
+
+// playAt emits the events for the global roll tick pt across all blocks active
+// on that beat, and updates the tracker playhead. Caller holds both locks.
+func (p *Player) playAt(s *Song, pt int, ops []midiOp) []midiOp {
+	tpb := s.ticksPerBeat()
+	beat := pt / tpb
+	sub := pt % tpb
 	p.playBeat = beat
 	p.playBlk = -1
 
 	for bi, blk := range s.Blocks {
 		if !s.rollGet(bi, beat) {
-			// Block silent this beat: release its tracks' held notes.
 			for _, t := range blk.Tracks {
 				if h := p.held[t]; h.active {
 					ops = append(ops, midiOp{ch: h.chan_, note: h.note})
@@ -301,8 +338,8 @@ func (p *Player) stepSongRoll(ops []midiOp) ([]midiOp, float64) {
 			}
 			continue
 		}
-		// Find the start of this contiguous run so the block's pattern plays
-		// from its beginning (and restarts after any erased gap).
+		// Start of this contiguous run, so the block's pattern plays from its
+		// beginning (and restarts after any erased gap).
 		runStart := beat
 		for runStart > 0 && s.rollGet(bi, runStart-1) {
 			runStart--
@@ -311,8 +348,7 @@ func (p *Player) stepSongRoll(ops []midiOp) ([]midiOp, float64) {
 		if bb < 1 {
 			bb = 1
 		}
-		localBeat := (beat - runStart) % bb
-		localTick := localBeat*tpb + sub
+		localTick := ((beat-runStart)%bb)*tpb + sub
 		if bi == p.editBlock {
 			p.playBlk = bi
 			p.playTick = localTick
@@ -323,12 +359,7 @@ func (p *Player) stepSongRoll(ops []midiOp) ([]midiOp, float64) {
 			}
 		}
 	}
-
-	p.pTick++
-	if p.pTick >= totalTicks {
-		p.pTick = 0
-	}
-	return ops, s.secondsPerTick()
+	return ops
 }
 
 // applyStep emits the note events for one step on one track (mono per track),

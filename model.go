@@ -158,6 +158,11 @@ type Song struct {
 	Sig    TimeSig
 	Blocks []*Block
 	Roll   [][]bool // Roll[i] is the beat lane for Blocks[i]; grows on demand
+
+	// Loop region, as an inclusive bar range, used when the transport is in
+	// loop ("region") mode. Defaults to the first bar.
+	LoopBar0 int
+	LoopBar1 int
 }
 
 func newRollRow() []bool { return make([]bool, rollBeats) }
@@ -180,6 +185,18 @@ func newSong() *Song {
 	return s
 }
 
+// loopRegionTicks returns the [lo, hi) tick range of the loop region, snapped
+// to whole bars. Falls back to the first bar for an invalid range.
+func (s *Song) loopRegionTicks() (lo, hi int) {
+	bpb := s.Sig.beatsPerBar()
+	tpb := s.ticksPerBeat()
+	b0, b1 := s.LoopBar0, s.LoopBar1
+	if b0 < 0 || b1 < b0 {
+		b0, b1 = 0, 0
+	}
+	return b0 * bpb * tpb, (b1 + 1) * bpb * tpb
+}
+
 // replaceWith adopts another song's contents in place (so existing *Song
 // references held by the player stay valid). Caller holds s.mu.
 func (s *Song) replaceWith(o *Song) {
@@ -187,6 +204,8 @@ func (s *Song) replaceWith(o *Song) {
 	s.Sig = o.Sig
 	s.Blocks = o.Blocks
 	s.Roll = o.Roll
+	s.LoopBar0 = o.LoopBar0
+	s.LoopBar1 = o.LoopBar1
 }
 
 func (s *Song) ticksPerBeat() int { return s.Sig.ticksPerBeat() }

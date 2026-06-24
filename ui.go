@@ -34,6 +34,7 @@ var (
 	styAccent   tcell.Style
 	styRollOdd  tcell.Style // faint background for odd piano-roll rows
 	styRollBar  tcell.Style // bar gridline in the piano roll
+	styLoopBar  tcell.Style // looped bar number in the ruler
 )
 
 func initStyles() {
@@ -52,6 +53,7 @@ func initStyles() {
 	styAccent = def.Foreground(tcell.ColorFuchsia).Bold(true)
 	styRollOdd = def.Background(tcell.NewRGBColor(38, 38, 46))
 	styRollBar = def.Foreground(tcell.ColorGray)
+	styLoopBar = def.Foreground(tcell.ColorRed).Bold(true)
 }
 
 // put writes s at (y, x) with the given style. tcell's PutStrStyled walks
@@ -136,6 +138,9 @@ type frame struct {
 	songTicks    int
 	elapsedTicks int
 	spt          float64
+
+	loopBar0 int
+	loopBar1 int
 }
 
 func (a *App) snapshot() *frame {
@@ -159,6 +164,8 @@ func (a *App) snapshot() *frame {
 		songBeats: s.totalBeats(),
 		songTicks: s.totalTicks(),
 		spt:       s.secondsPerTick(),
+		loopBar0:  s.LoopBar0,
+		loopBar1:  s.LoopBar1,
 	}
 	for i, b := range s.Blocks {
 		fr.blockNames = append(fr.blockNames, b.Name)
@@ -179,11 +186,7 @@ func (a *App) snapshot() *frame {
 
 	fr.playBeat, fr.playBlk, fr.playTick, fr.playing, fr.loop = a.player.state()
 	if fr.playing {
-		if fr.loop == LoopSong {
-			fr.elapsedTicks = fr.playBeat * fr.tpb
-		} else {
-			fr.elapsedTicks = fr.playTick
-		}
+		fr.elapsedTicks = fr.playBeat * fr.tpb
 	}
 	return fr
 }
@@ -488,10 +491,10 @@ func (a *App) drawTopBar(y, w int, fr *frame) {
 	x = a.button(y, x, glyphRec, a.ed.armed, ActRecord)
 
 	loopGlyph := glyphLoop
-	if fr.loop == LoopBlock {
+	if fr.loop == LoopRegion {
 		loopGlyph = glyphLoop1
 	}
-	x = a.button(y, x, loopGlyph, fr.loop == LoopBlock, ActLoopMode)
+	x = a.button(y, x, loopGlyph, fr.loop == LoopRegion, ActLoopMode)
 	x = a.button(y, x, glyphPanic, false, ActPanic)
 
 	bpmTxt := fmt.Sprintf("%.1f", fr.bpm)
@@ -800,7 +803,7 @@ func (a *App) drawPianoRoll(top, height, w int, fr *frame) {
 					ch = " "
 				}
 			}
-			if fr.playing && fr.loop == LoopSong && beat == fr.playBeat {
+			if fr.playing && beat == fr.playBeat {
 				sty = styPlayhead
 				if !marked {
 					ch = "|"
@@ -818,10 +821,17 @@ func (a *App) drawPianoRoll(top, height, w int, fr *frame) {
 func (a *App) drawRollRuler(y, gridX, visBeats int, fr *frame) {
 	a.put(y, 0, "bar", styDim)
 	bpb := fr.bpbar
+	// Looped bars' numbers are red (only while in loop mode).
+	loopShown := fr.loop == LoopRegion
 	for c := 0; c < visBeats; c++ {
 		beat := a.ed.rollBeatScroll + c
 		if beat%bpb == 0 {
-			a.put(y, gridX+c, fmt.Sprintf("%d", beat/bpb+1), styDim)
+			bar := beat / bpb
+			sty := styDim
+			if loopShown && bar >= fr.loopBar0 && bar <= fr.loopBar1 {
+				sty = styLoopBar
+			}
+			a.put(y, gridX+c, fmt.Sprintf("%d", bar+1), sty)
 		}
 	}
 }
@@ -962,10 +972,10 @@ var helpLines = []string{
 	"",
 	"# Piano roll (lower half) - rows are blocks, columns are beats",
 	"  Arrows move cursor   Shift+arrows or drag select a region",
-	"  Enter place block (bar-length markers)   . toggle one beat",
-	"  Del/Bksp erase   c copy   x cut   v paste (at cursor)",
+	"  Double-click toggles a beat; right-click toggles a whole bar",
+	"  Enter place block   . toggle beat   Del erase   c/x/v copy/cut/paste",
+	"  l = loop the selected bars (red numbers); F6 song/loop mode",
 	"  Toolbar Add/Remove add/remove a block row (a / D keys)",
-	"  Click a marker to toggle it; right-click to erase.",
 	"  Drag the separator bar to resize the tracker / roll panes.",
 	"",
 	"# Patchbay (F4)",

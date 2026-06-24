@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -679,6 +680,8 @@ func (a *App) handleArrangeKey(k tcell.Key, r rune, mod tcell.ModMask) {
 		a.rollToggle()
 	case 'p':
 		a.rollPaintCursor()
+	case 'l':
+		a.markLoopFromSelection()
 	case 'c':
 		a.markCopy()
 	case 'x':
@@ -692,6 +695,25 @@ func (a *App) handleArrangeKey(k tcell.Key, r rune, mod tcell.ModMask) {
 	case 'D':
 		a.blockRemoveCurrent()
 	}
+}
+
+// rollToggleBar toggles every beat of the bar containing the given beat (right
+// click on the piano roll). If the whole bar is set it clears it, else fills it.
+func (a *App) rollToggleBar(row, beat int) {
+	a.song.mu.Lock()
+	bpb := a.song.Sig.beatsPerBar()
+	start := (beat / bpb) * bpb
+	allSet := true
+	for k := 0; k < bpb; k++ {
+		if !a.song.rollGet(row, start+k) {
+			allSet = false
+			break
+		}
+	}
+	for k := 0; k < bpb; k++ {
+		a.song.rollSet(row, start+k, !allSet)
+	}
+	a.song.mu.Unlock()
 }
 
 // rollMove moves the roll cursor; with shift it extends the selection.
@@ -848,12 +870,27 @@ func (a *App) toggleArm() {
 
 func (a *App) toggleLoop() {
 	if a.player.loopMode() == LoopSong {
-		a.player.setLoopMode(LoopBlock)
-		a.ed.status = "Loop mode: BLOCK (live looping the edited block)"
+		a.player.setLoopMode(LoopRegion)
+		a.ed.status = "Loop: REGION (loops the marked bars)"
 	} else {
 		a.player.setLoopMode(LoopSong)
-		a.ed.status = "Loop mode: SONG (play arrangement)"
+		a.ed.status = "Loop: SONG (play once to the end)"
 	}
+}
+
+// markLoopFromSelection sets the loop region to the bars covered by the current
+// piano-roll selection (extended to whole bars) and switches to loop mode.
+func (a *App) markLoopFromSelection() {
+	_, b0, _, b1 := a.ed.rollSelRect()
+	a.song.mu.Lock()
+	bpb := a.song.Sig.beatsPerBar()
+	a.song.LoopBar0 = b0 / bpb
+	a.song.LoopBar1 = b1 / bpb
+	bar0, bar1 := a.song.LoopBar0, a.song.LoopBar1
+	a.song.mu.Unlock()
+	a.ed.selActive = false
+	a.player.setLoopMode(LoopRegion)
+	a.ed.status = fmt.Sprintf("Loop region: bars %d-%d", bar0+1, bar1+1)
 }
 
 // --- mouse ---
@@ -874,8 +911,9 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	pRelease := cur&tcell.ButtonPrimary == 0 && prev&tcell.ButtonPrimary != 0
 	sPress := cur&tcell.ButtonSecondary != 0 && prev&tcell.ButtonSecondary == 0
 
-	// A drag begun on the piano roll: extend the selection while held, and on
-	// release toggle the marker if the pointer never moved (i.e. a plain click).
+	// A drag begun on the piano roll extends the selection while held. A plain
+	// click only moves the cursor / starts a selection (markers are toggled by
+	// double-click or right-click, see below).
 	if a.rollDrag {
 		if pHeld {
 			if reg, ok := a.ed.hitTest(x, y); ok && reg.action == ActRollCell {
@@ -896,9 +934,6 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		}
 		if pRelease {
 			a.rollDrag = false
-			if !a.dragMoved {
-				a.rollToggle()
-			}
 			return
 		}
 		return
@@ -1092,35 +1127,39 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		a.resetCursorToBlock()
 	case ActRollCell:
 		a.ed.focus = FocusArrange
-		if right {
-			a.ed.editBlock = reg.data1
-			a.player.setEditBlock(reg.data1)
-			a.resetCursorToBlock()
-			a.ed.rollBeat = reg.data2
-			a.song.mu.Lock()
-			a.song.rollSet(reg.data1, reg.data2, false)
-			a.song.mu.Unlock()
+		a.ed.editBlock = reg.data1
+		a.player.setEditBlock(reg.data1)
+		a.resetCursorToBlock()
+		a.ed.rollBeat = reg.data2
+		switch {
+		case right:
+			// Right-click toggles the whole bar.
+			a.rollToggleBar(reg.data1, reg.data2)
 			a.ed.selActive = false
-		} else if shift {
+		case shift:
 			if !a.ed.selActive {
 				a.ed.selActive = true
-				a.ed.selRow = a.ed.editBlock
-				a.ed.selBeat = a.ed.rollBeat
+				a.ed.selRow = reg.data1
+				a.ed.selBeat = reg.data2
 			}
-			a.ed.editBlock = reg.data1
-			a.player.setEditBlock(reg.data1)
-			a.resetCursorToBlock()
-			a.ed.rollBeat = reg.data2
-		} else {
-			a.ed.selActive = false
-			a.ed.editBlock = reg.data1
-			a.player.setEditBlock(reg.data1)
-			a.resetCursorToBlock()
-			a.ed.rollBeat = reg.data2
-			a.rollDrag = true
-			a.dragRow = reg.data1
-			a.dragBeat = reg.data2
-			a.dragMoved = false
+		default:
+			// Double-click toggles a single beat; a single click starts a
+			// cursor move / drag-select.
+			now := time.Now()
+			dbl := now.Sub(a.lastClickAt) < dblClickWindow && a.lastClickX == x && a.lastClickY == y
+			a.lastClickAt = now
+			a.lastClickX = x
+			a.lastClickY = y
+			if dbl {
+				a.rollToggle()
+				a.ed.selActive = false
+			} else {
+				a.ed.selActive = false
+				a.rollDrag = true
+				a.dragRow = reg.data1
+				a.dragBeat = reg.data2
+				a.dragMoved = false
+			}
 		}
 	}
 
