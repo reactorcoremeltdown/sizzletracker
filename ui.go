@@ -577,6 +577,9 @@ func (a *App) drawTracker(top, height, w int, fr *frame) {
 	a.computeTickScroll(be.length, stepsH, fr)
 	first := a.ed.tickScroll
 
+	selOn := a.ed.focus == FocusTracker && a.ed.tSelActive
+	selT0, selK0, selT1, selK1 := a.ed.trkSelRect()
+
 	tpbar := fr.tpbar
 	for row := 0; row < stepsH; row++ {
 		tick := first + row
@@ -618,18 +621,23 @@ func (a *App) drawTracker(top, height, w int, fr *frame) {
 			offs := []int{0, 4, 7}
 			widths := []int{3, 2, 2}
 
+			inSel := selOn && ti >= selT0 && ti <= selT1 && tick >= selK0 && tick <= selK1
+
 			for ci, cell := range cells {
 				px := cx + offs[ci]
 				cellSty := rowSty
 				if isPlay {
 					cellSty = styPlayhead
 				}
+				if inSel && !isPlay {
+					cellSty = stySel
+				}
 				isCur := a.ed.focus == FocusTracker &&
 					ti == a.ed.curTrack && tick == a.ed.curTick && ci == a.ed.curCol
 				if isCur {
 					cellSty = styCursor
 				}
-				if !isCur && !isPlay && (cell == "---" || cell == "..") {
+				if !isCur && !isPlay && !inSel && (cell == "---" || cell == "..") {
 					cellSty = cellSty.Dim(true)
 				}
 				a.put(y, px, cell, cellSty)
@@ -944,13 +952,13 @@ var helpLines = []string{
 	"  Projects are plain-text .sng; type a path in the dialog, Enter.",
 	"",
 	"# Tracker (upper half)",
-	"  Arrows move (L/R cross columns/tracks)",
-	"  Shift+L/R change track   PgUp/PgDn beat   Home/End ends",
-	"  [ / ] or < / > switch block",
+	"  Arrows move (L/R cross columns/tracks)   PgUp/PgDn beat",
+	"  Shift+arrows or drag select a region (tracks x rows)",
+	"  Ctrl+C copy  Ctrl+X cut  Ctrl+V paste (cursor=top-left)  Del clear",
+	"  [ / ] or < / > switch block   Home/End top/bottom",
 	"  len: - halves, + doubles, click number to type a length",
-	"  z..m / q..i notes   ` note-off   . or Del clear   Bksp back",
+	"  z..m / q..i notes   ` note-off   . clear   Bksp clear+back",
 	"  - / = octave   +trk / -trk add/delete track",
-	"  Tall blocks scroll to keep the cursor / playhead in view.",
 	"",
 	"# Piano roll (lower half) - rows are blocks, columns are beats",
 	"  Arrows move cursor   Shift+arrows or drag select a region",

@@ -52,6 +52,12 @@ type App struct {
 	dragBeat  int
 	dragMoved bool
 
+	// Tracker drag-select state.
+	trkDrag      bool
+	trkDragT     int
+	trkDragK     int
+	trkDragMoved bool
+
 	// Tracker/piano-roll separator drag state.
 	sepDrag bool
 

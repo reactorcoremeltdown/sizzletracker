@@ -55,8 +55,6 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 		switch k {
 		case tcell.KeyF10:
 			return false
-		case tcell.KeyCtrlC:
-			return false
 		case tcell.KeyF1:
 			a.ed.showHelp = true
 			return true
@@ -372,27 +370,42 @@ func (a *App) handleTrackerKey(k tcell.Key, r rune, mod tcell.ModMask) {
 
 	switch k {
 	case tcell.KeyUp:
-		a.ed.curTick = wrap(a.ed.curTick-1, blk.Length)
+		if shift {
+			a.trkExtend(0, -1)
+		} else {
+			a.ed.tSelActive = false
+			a.ed.curTick = wrap(a.ed.curTick-1, blk.Length)
+		}
 		return
 	case tcell.KeyDown:
-		a.ed.curTick = wrap(a.ed.curTick+1, blk.Length)
+		if shift {
+			a.trkExtend(0, 1)
+		} else {
+			a.ed.tSelActive = false
+			a.ed.curTick = wrap(a.ed.curTick+1, blk.Length)
+		}
 		return
 	case tcell.KeyPgUp:
+		a.ed.tSelActive = false
 		a.ed.curTick = clampInt(a.ed.curTick-tpb, 0, blk.Length-1)
 		return
 	case tcell.KeyPgDn:
+		a.ed.tSelActive = false
 		a.ed.curTick = clampInt(a.ed.curTick+tpb, 0, blk.Length-1)
 		return
 	case tcell.KeyHome:
+		a.ed.tSelActive = false
 		a.ed.curTick = 0
 		return
 	case tcell.KeyEnd:
+		a.ed.tSelActive = false
 		a.ed.curTick = blk.Length - 1
 		return
 	case tcell.KeyLeft:
 		if shift {
-			a.ed.curTrack = wrap(a.ed.curTrack-1, len(blk.Tracks))
+			a.trkExtend(-1, 0)
 		} else {
+			a.ed.tSelActive = false
 			a.ed.curCol--
 			if a.ed.curCol < 0 {
 				a.ed.curCol = numCols - 1
@@ -402,8 +415,9 @@ func (a *App) handleTrackerKey(k tcell.Key, r rune, mod tcell.ModMask) {
 		return
 	case tcell.KeyRight:
 		if shift {
-			a.ed.curTrack = wrap(a.ed.curTrack+1, len(blk.Tracks))
+			a.trkExtend(1, 0)
 		} else {
+			a.ed.tSelActive = false
 			a.ed.curCol++
 			if a.ed.curCol >= numCols {
 				a.ed.curCol = 0
@@ -411,12 +425,28 @@ func (a *App) handleTrackerKey(k tcell.Key, r rune, mod tcell.ModMask) {
 			}
 		}
 		return
+	case tcell.KeyEsc:
+		a.ed.tSelActive = false
+		return
+	case tcell.KeyCtrlC:
+		a.trkCopy()
+		return
+	case tcell.KeyCtrlX:
+		a.trkCut()
+		return
+	case tcell.KeyCtrlV:
+		a.trkPaste()
+		return
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		a.setCell(func(st *Step) { *st = emptyStep() })
 		a.ed.curTick = wrap(a.ed.curTick-1, blk.Length)
 		return
 	case tcell.KeyDelete:
-		a.setCell(func(st *Step) { *st = emptyStep() })
+		if a.ed.tSelActive {
+			a.trkClearSel()
+		} else {
+			a.setCell(func(st *Step) { *st = emptyStep() })
+		}
 		return
 	}
 
@@ -503,12 +533,98 @@ func (a *App) enterNote(note int) {
 }
 
 func (a *App) setCell(f func(*Step)) {
+	a.ed.tSelActive = false // a single-cell edit clears any selection
 	a.song.mu.Lock()
 	defer a.song.mu.Unlock()
 	blk := a.song.Blocks[a.ed.editBlock]
 	if a.ed.curTrack < len(blk.Tracks) && a.ed.curTick < blk.Length {
 		f(&blk.Tracks[a.ed.curTrack].Steps[a.ed.curTick])
 	}
+}
+
+// --- tracker selection (tracks × ticks) ---
+
+// trkExtend moves the cursor by (dTrack, dTick), extending the selection
+// (anchoring it on the first shift-move).
+func (a *App) trkExtend(dt, dk int) {
+	a.song.mu.Lock()
+	blk := a.song.Blocks[a.ed.editBlock]
+	nt, nk := len(blk.Tracks), blk.Length
+	a.song.mu.Unlock()
+	if !a.ed.tSelActive {
+		a.ed.tSelActive = true
+		a.ed.tSelTrack = a.ed.curTrack
+		a.ed.tSelTick = a.ed.curTick
+	}
+	a.ed.curTrack = clampInt(a.ed.curTrack+dt, 0, max(0, nt-1))
+	a.ed.curTick = clampInt(a.ed.curTick+dk, 0, max(0, nk-1))
+}
+
+func (a *App) trkCopy() {
+	t0, k0, t1, k1 := a.ed.trkSelRect()
+	a.song.mu.Lock()
+	blk := a.song.Blocks[a.ed.editBlock]
+	t0, t1 = clampInt(t0, 0, len(blk.Tracks)-1), clampInt(t1, 0, len(blk.Tracks)-1)
+	k0, k1 = clampInt(k0, 0, blk.Length-1), clampInt(k1, 0, blk.Length-1)
+	clip := make([][]Step, t1-t0+1)
+	for t := t0; t <= t1; t++ {
+		col := make([]Step, k1-k0+1)
+		for k := k0; k <= k1; k++ {
+			col[k-k0] = blk.Tracks[t].Steps[k]
+		}
+		clip[t-t0] = col
+	}
+	a.song.mu.Unlock()
+	a.ed.trkClip = clip
+	a.ed.status = fmt.Sprintf("Copied %d track(s) x %d row(s)", t1-t0+1, k1-k0+1)
+}
+
+func (a *App) trkClearSel() {
+	t0, k0, t1, k1 := a.ed.trkSelRect()
+	a.song.mu.Lock()
+	blk := a.song.Blocks[a.ed.editBlock]
+	for t := t0; t <= t1 && t < len(blk.Tracks); t++ {
+		for k := k0; k <= k1 && k < blk.Length; k++ {
+			if t >= 0 && k >= 0 {
+				blk.Tracks[t].Steps[k] = emptyStep()
+			}
+		}
+	}
+	a.song.mu.Unlock()
+	a.ed.tSelActive = false
+	a.ed.status = "Cleared selection"
+}
+
+func (a *App) trkCut() {
+	a.trkCopy()
+	a.trkClearSel()
+	a.ed.status = "Cut selection"
+}
+
+// trkPaste writes the clipboard with its top-left corner at the cursor,
+// restoring note / velocity / channel into their respective columns.
+func (a *App) trkPaste() {
+	if len(a.ed.trkClip) == 0 {
+		return
+	}
+	a.song.mu.Lock()
+	blk := a.song.Blocks[a.ed.editBlock]
+	for dt, col := range a.ed.trkClip {
+		tt := a.ed.curTrack + dt
+		if tt < 0 || tt >= len(blk.Tracks) {
+			continue
+		}
+		for dk, st := range col {
+			kk := a.ed.curTick + dk
+			if kk < 0 || kk >= blk.Length {
+				continue
+			}
+			blk.Tracks[tt].Steps[kk] = st
+		}
+	}
+	a.song.mu.Unlock()
+	a.ed.tSelActive = false
+	a.ed.status = "Pasted at cursor"
 }
 
 func (a *App) advance() {
@@ -801,6 +917,30 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		return
 	}
 
+	// Dragging over tracker cells selects a rectangle of steps.
+	if a.trkDrag {
+		if pHeld {
+			if reg, ok := a.ed.hitTest(x, y); ok && reg.action == ActTrackerCell {
+				if reg.data1 != a.trkDragT || reg.data2 != a.trkDragK {
+					a.trkDragMoved = true
+				}
+				if a.trkDragMoved {
+					a.ed.tSelActive = true
+					a.ed.tSelTrack = a.trkDragT
+					a.ed.tSelTick = a.trkDragK
+					a.ed.curTrack = reg.data1
+					a.ed.curTick = reg.data2
+				}
+			}
+			return
+		}
+		if pRelease {
+			a.trkDrag = false
+			return
+		}
+		return
+	}
+
 	if !pPress && !sPress {
 		return // motion or release with nothing pending
 	}
@@ -933,6 +1073,13 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		a.ed.curCol = reg.data3
 		if right {
 			a.setCell(func(st *Step) { *st = emptyStep() })
+		} else {
+			// Begin a drag-select; a plain click (no drag) just moves the cursor.
+			a.ed.tSelActive = false
+			a.trkDrag = true
+			a.trkDragT = reg.data1
+			a.trkDragK = reg.data2
+			a.trkDragMoved = false
 		}
 	case ActSeparator:
 		a.sepDrag = true

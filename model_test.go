@@ -128,6 +128,56 @@ func TestPolyphonicPunch(t *testing.T) {
 	}
 }
 
+// TestTrackerSelectionOps checks copy/cut/clear/paste over a rectangular
+// tracker selection (tracks x ticks), with the cursor as paste top-left.
+func TestTrackerSelectionOps(t *testing.T) {
+	s := newSong()
+	app := &App{song: s, player: newPlayer(s, &MidiEngine{}), ed: newEditor()}
+	blk := s.Blocks[0]
+	for len(blk.Tracks) < 3 {
+		blk.addTrack()
+	}
+	// Seed a 2-track x 2-row pattern at tracks 0-1, ticks 0-1.
+	blk.Tracks[0].Steps[0] = Step{Note: 60, Vel: 100, Chan: 0}
+	blk.Tracks[0].Steps[1] = Step{Note: 62, Vel: 90, Chan: 1}
+	blk.Tracks[1].Steps[0] = Step{Note: 64, Vel: 80, Chan: 2}
+	blk.Tracks[1].Steps[1] = Step{Note: NoteOff, Vel: ValEmpty, Chan: ValEmpty}
+
+	// Select the 2x2 block: anchor (0,0), cursor (1,1).
+	app.ed.curTrack, app.ed.curTick = 1, 1
+	app.ed.tSelActive = true
+	app.ed.tSelTrack, app.ed.tSelTick = 0, 0
+	app.trkCopy()
+	if len(app.ed.trkClip) != 2 || len(app.ed.trkClip[0]) != 2 {
+		t.Fatalf("clip dims = %dx%d, want 2x2", len(app.ed.trkClip), len(app.ed.trkClip[0]))
+	}
+
+	// Cut clears the source (and deselects).
+	app.ed.tSelActive = true
+	app.ed.tSelTrack, app.ed.tSelTick = 0, 0
+	app.ed.curTrack, app.ed.curTick = 1, 1
+	app.trkCut()
+	if blk.Tracks[0].Steps[0].Note != NoteEmpty || blk.Tracks[1].Steps[1].Note != NoteEmpty {
+		t.Errorf("cut did not clear source cells")
+	}
+	if app.ed.tSelActive {
+		t.Errorf("cut should clear the selection")
+	}
+
+	// Paste with the cursor at track 1, tick 4 (top-left), restoring all columns.
+	app.ed.curTrack, app.ed.curTick = 1, 4
+	app.trkPaste()
+	if got := blk.Tracks[1].Steps[4]; got != (Step{Note: 60, Vel: 100, Chan: 0}) {
+		t.Errorf("paste top-left = %+v, want {60,100,0}", got)
+	}
+	if got := blk.Tracks[2].Steps[5]; got.Note != NoteOff {
+		t.Errorf("paste bottom-right note = %d, want NoteOff", got.Note)
+	}
+	if got := blk.Tracks[1].Steps[5]; got != (Step{Note: 62, Vel: 90, Chan: 1}) {
+		t.Errorf("paste vel/chan not restored: %+v", got)
+	}
+}
+
 // TestKeyboardNoteChannel checks a keyboard-entered note defaults to channel 1.
 func TestKeyboardNoteChannel(t *testing.T) {
 	s := newSong()

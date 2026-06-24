@@ -122,6 +122,13 @@ type Editor struct {
 	selRow    int
 	selBeat   int
 
+	// Tracker rectangular selection (tracks × ticks). Cursor corner is
+	// (curTrack, curTick); anchor is (tSelTrack, tSelTick) when tSelActive.
+	tSelActive bool
+	tSelTrack  int
+	tSelTick   int
+	trkClip    [][]Step // copied steps: trkClip[trackOffset][tickOffset]
+
 	// Marker clipboard (rectangle of beat-markers).
 	markClip [][]bool
 
@@ -206,6 +213,18 @@ func (e *Editor) rollSelRect() (r0, b0, r1, b1 int) {
 	if e.selActive {
 		r0, r1 = minMaxInt(e.selRow, e.editBlock)
 		b0, b1 = minMaxInt(e.selBeat, e.rollBeat)
+	}
+	return
+}
+
+// trkSelRect returns the inclusive tracker selection rectangle (tracks t0..t1,
+// ticks k0..k1). With no active selection it is just the cursor cell.
+func (e *Editor) trkSelRect() (t0, k0, t1, k1 int) {
+	t0, t1 = e.curTrack, e.curTrack
+	k0, k1 = e.curTick, e.curTick
+	if e.tSelActive {
+		t0, t1 = minMaxInt(e.tSelTrack, e.curTrack)
+		k0, k1 = minMaxInt(e.tSelTick, e.curTick)
 	}
 	return
 }

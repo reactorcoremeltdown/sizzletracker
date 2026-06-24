@@ -73,10 +73,14 @@ ncurses, with live pattern editing for MIDI "looping".
   recorded note sustains exactly as long as you held the key; held notes spread
   across tracks (polyphonic), creating tracks as needed. When **stopped** it
   acts as a chord step recorder. A note sounds until a note-off (or retrigger).
+* **Tracker block editing.** Select a rectangle of cells (tracks × rows) by
+  **drag** or **Shift+arrows**, then **Cut / Copy / Paste** (`Ctrl+X/C/V`) or
+  **Delete** — paste drops the copied notes, velocities and channels into their
+  respective columns with the cursor as the top-left corner.
 * **Mouse support** throughout: click transport buttons, click a tracker
-  cell to move the cursor, right-click a cell to clear it; in the piano roll,
-  click a marker to toggle it, right-click to erase, and **drag to select** a
-  region of markers. Click a block row's label to edit it in the tracker.
+  cell to move the cursor (drag to select), right-click a cell to clear it; in
+  the piano roll, click a marker to toggle it, right-click to erase, and drag
+  to select a region of markers. Click a block row's label to edit it.
 
 ## Build
 
@@ -196,14 +200,16 @@ Tracker focus:
 | Key | Action |
 |-----|--------|
 | Arrows | Move cursor (←/→ cross columns/tracks) |
-| `Shift`+←/→ | Previous / next track |
+| `Shift`+Arrows / drag | Select a rectangle of cells (tracks × rows) |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste the selection (cursor = paste top-left; note, velocity and channel land in their columns) |
+| `Del` | Clear the selection (or the cell if none) |
 | `PgUp` / `PgDn` | Jump one beat |
 | `Home` / `End` | Top / bottom of block |
 | `[` / `]` | Previous / next block to edit |
 | `z s x d c v g b h n j m` | Enter notes (lower octave) |
 | `q 2 w 3 e r 5 t 6 y 7 u i` | Enter notes (upper octave) |
 | `` ` `` | Note-off (the note sustains until this, or a new note) |
-| `.` / `Del` | Clear cell |
+| `.` | Clear cell |
 | `Backspace` | Clear cell and step back |
 | `-` / `=` | Octave down / up |
 | velocity column | hex digits `0-9 a-f` (two-nibble entry) |
