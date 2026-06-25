@@ -66,6 +66,7 @@ type MidiEngine struct {
 	inStr  []*portmidi.Stream
 	inStop []chan struct{}
 	outStr []*portmidi.Stream
+	inWG   sync.WaitGroup // tracks live input-listener goroutines
 
 	// routes[i][o]: input i routed to output o. i==0 is the Tracker source;
 	// i>=1 maps to ins[i-1]. filter[o][c]: channel c (0..15) passes to output o.
@@ -77,6 +78,13 @@ type MidiEngine struct {
 	noThru bool
 
 	onIn func(on bool, note, vel, ch int)
+}
+
+// isAvailable reports whether PortMidi initialised successfully.
+func (m *MidiEngine) isAvailable() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.available
 }
 
 // setNoteThru enables/disables forwarding of incoming notes to outputs.
@@ -93,14 +101,25 @@ func newMidiEngine() *MidiEngine {
 		return m
 	}
 	m.available = true
-	m.discover()
-	m.openAll()
-	m.initMatrix()
+	m.openDevices()
 	m.defaultRouting()
 	return m
 }
 
-func (m *MidiEngine) discover() {
+// openDevices (re)enumerates all MIDI devices, opens every input/output stream,
+// starts the input-listener goroutines, and (re)sizes the routing matrix to
+// match. It assumes no streams are currently open (call stopInputs + close the
+// old streams first when re-scanning).
+func (m *MidiEngine) openDevices() {
+	type listener struct {
+		i    int
+		str  *portmidi.Stream
+		stop chan struct{}
+	}
+	var start []listener
+
+	m.mu.Lock()
+	m.ins, m.outs = nil, nil
 	n := portmidi.CountDevices()
 	for i := 0; i < n; i++ {
 		info := portmidi.Info(portmidi.DeviceID(i))
@@ -114,9 +133,6 @@ func (m *MidiEngine) discover() {
 			m.ins = append(m.ins, portDevice{id: portmidi.DeviceID(i), name: info.Name})
 		}
 	}
-}
-
-func (m *MidiEngine) openAll() {
 	m.outStr = make([]*portmidi.Stream, len(m.outs))
 	for o := range m.outs {
 		if str, err := portmidi.NewOutputStream(m.outs[o].id, 1024, 0); err == nil {
@@ -133,13 +149,28 @@ func (m *MidiEngine) openAll() {
 		m.inStr[i] = str
 		stop := make(chan struct{})
 		m.inStop[i] = stop
-		go m.listen(i, str, stop)
+		start = append(start, listener{i, str, stop})
+	}
+	m.initMatrixLocked()
+	m.mu.Unlock()
+
+	for _, l := range start {
+		m.inWG.Add(1)
+		go m.listen(l.i, l.str, l.stop)
 	}
 }
 
-// initMatrix sizes routes (numInputs × numOutputs) and the per-output channel
-// filter (default: all channels pass).
+// initMatrix sizes the routing matrix; initMatrixLocked is the same with the
+// caller holding m.mu.
 func (m *MidiEngine) initMatrix() {
+	m.mu.Lock()
+	m.initMatrixLocked()
+	m.mu.Unlock()
+}
+
+// initMatrixLocked sizes routes (numInputs × numOutputs) and the per-output
+// channel filter (default: all channels pass). Caller holds m.mu.
+func (m *MidiEngine) initMatrixLocked() {
 	ni := len(m.ins) + 1 // +1 for the Tracker source
 	no := len(m.outs)
 	m.routes = make([][]bool, ni)
@@ -158,6 +189,8 @@ func (m *MidiEngine) initMatrix() {
 // defaultRouting connects the Tracker source to the default output so the app
 // makes sound out of the box (matching the old single-output behaviour).
 func (m *MidiEngine) defaultRouting() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if len(m.outs) == 0 {
 		return
 	}
@@ -170,6 +203,27 @@ func (m *MidiEngine) defaultRouting() {
 		}
 	}
 	m.routes[0][sel] = true
+}
+
+// deviceNames extracts the display names of a device slice (order preserved).
+func deviceNames(ds []portDevice) []string {
+	names := make([]string, len(ds))
+	for i, d := range ds {
+		names[i] = d.name
+	}
+	return names
+}
+
+func sameNames(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // --- patchbay topology (read by the UI) ---
@@ -356,6 +410,7 @@ func (m *MidiEngine) sendTo(o, status, d1, d2 int) {
 // --- input listening + thru forwarding ---
 
 func (m *MidiEngine) listen(hi int, str *portmidi.Stream, stop chan struct{}) {
+	defer m.inWG.Done()
 	for {
 		select {
 		case <-stop:
@@ -414,29 +469,102 @@ func (m *MidiEngine) forwardFrom(in, status, d1, d2 int) {
 	}
 }
 
-func (m *MidiEngine) close() {
-	m.allNotesOff()
+// stopInputs stops and waits for every input-listener goroutine. It must be
+// called WITHOUT holding sendMu: a listener may be blocked in forwardFrom
+// waiting on sendMu, so holding it here would deadlock the wait.
+func (m *MidiEngine) stopInputs() {
 	m.mu.Lock()
-	for _, st := range m.inStop {
+	stops := m.inStop
+	m.inStop = nil
+	m.mu.Unlock()
+	for _, st := range stops {
 		if st != nil {
 			close(st)
 		}
 	}
-	for _, s := range m.inStr {
+	m.inWG.Wait()
+}
+
+// closeStreams closes all open input/output streams. Caller must hold sendMu
+// (so no sender touches a stream) and must have stopped the listeners first.
+func (m *MidiEngine) closeStreams() {
+	m.mu.Lock()
+	inStr, outStr := m.inStr, m.outStr
+	m.inStr, m.outStr = nil, nil
+	m.mu.Unlock()
+	for _, s := range inStr {
 		if s != nil {
 			s.Close()
 		}
 	}
-	for _, s := range m.outStr {
+	for _, s := range outStr {
 		if s != nil {
 			s.Close()
 		}
 	}
+}
+
+// rescan re-enumerates MIDI devices (picking up gear connected or disconnected
+// since startup) and reopens all streams, preserving the current routing and
+// channel filters by device name. It returns true if the set of available
+// devices changed. Safe to call concurrently with the player and UI; senders
+// are blocked only briefly during the stream swap.
+func (m *MidiEngine) rescan() bool {
+	m.mu.Lock()
+	avail := m.available
+	oldIns := deviceNames(m.ins)
+	oldOuts := deviceNames(m.outs)
+	m.mu.Unlock()
+	if !avail {
+		return false
+	}
+
+	// Preserve the live patch (including unsaved edits) across the rebuild.
+	routes, filters := m.exportPatch()
+
+	// 1. Stop listeners first, without sendMu, so a listener mid-forward can
+	//    finish and exit (otherwise inWG.Wait would deadlock).
+	m.stopInputs()
+
+	// 2. Swap streams and re-enumerate with senders blocked.
+	m.sendMu.Lock()
+	m.closeStreams()
+	portmidi.Terminate()
+	if err := portmidi.Initialize(); err != nil {
+		m.mu.Lock()
+		m.available = false
+		m.ins, m.outs = nil, nil
+		m.initMatrixLocked()
+		m.mu.Unlock()
+		m.sendMu.Unlock()
+		return true
+	}
+	m.openDevices()
+	m.sendMu.Unlock()
+
+	// 3. Restore routing by name onto the new device set.
+	m.applyPatch(routes, filters)
+
+	m.mu.Lock()
+	newIns := deviceNames(m.ins)
+	newOuts := deviceNames(m.outs)
+	m.mu.Unlock()
+	return !sameNames(oldIns, newIns) || !sameNames(oldOuts, newOuts)
+}
+
+func (m *MidiEngine) close() {
+	m.mu.Lock()
 	avail := m.available
 	m.mu.Unlock()
-	if avail {
-		portmidi.Terminate()
+	if !avail {
+		return
 	}
+	m.allNotesOff()
+	m.stopInputs()
+	m.sendMu.Lock()
+	m.closeStreams()
+	m.sendMu.Unlock()
+	portmidi.Terminate()
 }
 
 // --- persistence helpers ---

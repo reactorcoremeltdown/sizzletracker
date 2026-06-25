@@ -104,3 +104,59 @@ func TestPatchRouting(t *testing.T) {
 		t.Errorf("applyPatch did not restore filter (ch5 on A should stay off)")
 	}
 }
+
+func TestSameNames(t *testing.T) {
+	if !sameNames([]string{"A", "B"}, []string{"A", "B"}) {
+		t.Errorf("identical name lists should compare equal")
+	}
+	if sameNames([]string{"A", "B"}, []string{"A", "C"}) {
+		t.Errorf("differing names should not compare equal")
+	}
+	if sameNames([]string{"A"}, []string{"A", "B"}) {
+		t.Errorf("different lengths should not compare equal")
+	}
+	if got := deviceNames([]portDevice{{name: "X"}, {name: "Y"}}); !eqStr(got, []string{"X", "Y"}) {
+		t.Errorf("deviceNames = %v, want [X Y]", got)
+	}
+}
+
+func eqStr(a, b []string) bool { return sameNames(a, b) }
+
+// TestRescanUnavailable verifies a rescan on an engine without PortMidi is a
+// safe no-op (returns false, touches nothing).
+func TestRescanUnavailable(t *testing.T) {
+	m := fakeEngine([]string{"A"}, []string{"K"}) // available defaults to false
+	if m.rescan() {
+		t.Errorf("rescan on unavailable engine should report no change")
+	}
+}
+
+// TestPatchSurvivesDeviceReorder mirrors what rescan relies on: routing and
+// filters are restored by device *name* even when device indices change (e.g.
+// a device was unplugged so the others shifted position).
+func TestPatchSurvivesDeviceReorder(t *testing.T) {
+	m := fakeEngine([]string{"A", "B", "C"}, []string{"K"})
+	m.toggleRoute(0, 1) // Tracker -> B
+	m.toggleRoute(1, 2) // K -> C
+	m.setFilterAll(2, false)
+	m.toggleFilter(2, 0) // C: only channels 0 and 1
+	m.toggleFilter(2, 1)
+	routes, filters := m.exportPatch()
+
+	// Same devices, different order (as after a rescan re-enumeration).
+	m2 := fakeEngine([]string{"C", "A", "B"}, []string{"K"}) // B=2, C=0
+	m2.applyPatch(routes, filters)
+
+	if !m2.route(0, 2) {
+		t.Errorf("Tracker->B not restored at B's new index")
+	}
+	if !m2.route(1, 0) {
+		t.Errorf("K->C not restored at C's new index")
+	}
+	if m2.route(0, 0) || m2.route(1, 2) {
+		t.Errorf("stale routes leaked to wrong indices")
+	}
+	if !m2.filterOn(0, 0) || !m2.filterOn(0, 1) || m2.filterOn(0, 2) {
+		t.Errorf("C channel filter not restored by name")
+	}
+}

@@ -68,6 +68,7 @@ const (
 	ActChanCell    // data1=output, data2=channel (toggle one channel)
 	ActChanAll     // data1=output (all channels on)
 	ActChanNone    // data1=output (all channels off)
+	ActRescan      // rescan connected MIDI devices
 	ActTrackerCell // data1=track, data2=tick, data3=column
 	ActAddTrack
 	ActDelTrack   // data1=track index to delete

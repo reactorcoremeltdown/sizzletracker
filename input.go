@@ -151,6 +151,7 @@ func (a *App) toggleView() {
 	case ViewEdit:
 		a.ed.view = ViewPatch
 		a.ed.status = "MIDI patchbay (F4 cycles views)"
+		a.tryRescan(false) // refresh the device list on entry
 	case ViewPatch:
 		a.ed.view = ViewSettings
 		a.ed.status = "Settings (F4 cycles views)"
@@ -205,6 +206,9 @@ func (a *App) handlePatchKey(k tcell.Key, r rune) {
 			} else {
 				a.ed.chanMenuOut = a.ed.patchOut
 			}
+		case 'r':
+			a.ed.status = "Rescanning MIDI devices..."
+			a.tryRescan(true)
 		}
 	}
 }
@@ -1148,6 +1152,10 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	case ActTabPatch:
 		a.ed.view = ViewPatch
 		a.ed.chanMenuOut = -1
+		a.tryRescan(false) // refresh the device list on entry
+	case ActRescan:
+		a.ed.status = "Rescanning MIDI devices..."
+		a.tryRescan(true)
 	case ActTabSettings:
 		a.ed.view = ViewSettings
 		a.ed.chanMenuOut = -1

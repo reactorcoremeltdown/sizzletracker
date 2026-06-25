@@ -351,8 +351,13 @@ func (a *App) drawPatchbay(top, height, w int) {
 	}
 	a.ed.patchOutScr = clampInt(a.ed.patchOutScr, 0, max(0, no-rowsH))
 
-	// Column header.
+	// Column header, with a Rescan control between the labels and the matrix.
 	a.put(top, 0, "OUTPUT / chan", styAccent)
+	rescanLbl := " Rescan "
+	if patchFiltX+cellWidth(rescanLbl) <= matrixX {
+		a.put(top, patchFiltX, rescanLbl, styBtn)
+		a.ed.addRegion(Region{x: patchFiltX, y: top, w: cellWidth(rescanLbl), h: 1, action: ActRescan})
+	}
 	for c := 0; c < visIn; c++ {
 		in := a.ed.patchInScr + c
 		if in >= ni {
@@ -1098,6 +1103,7 @@ var helpLines = []string{
 	"  Arrows move; Enter / * / click toggles a connection.",
 	"  [..] per output opens a channel filter: All / None / toggle",
 	"  channels (stays open; click outside or Esc closes). c opens it.",
+	"  Devices auto-rescan while the patchbay is open; r / Rescan forces it.",
 	"",
 	"# Live punch-in (polyphonic)",
 	"  Arm record (F5); play a connected controller. Note-on/off record",

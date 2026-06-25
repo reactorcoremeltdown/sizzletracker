@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -66,6 +67,14 @@ type App struct {
 
 	// quit is set by the File > Exit menu item to end the event loop.
 	quit bool
+
+	// Live MIDI device rescanning. A background ticker requests rescans; the
+	// main loop runs at most one at a time in a goroutine (rescanInFlight) and
+	// applies the result via rescanDone.
+	rescanTick     chan struct{}
+	rescanDone     chan bool
+	rescanInFlight bool
+	rescanWG       sync.WaitGroup
 }
 
 // dblClickWindow is how close two clicks at the same cell must be to count as
@@ -161,14 +170,16 @@ func run() error {
 	}
 
 	app := &App{
-		screen:  screen,
-		song:    song,
-		midi:    mid,
-		player:  player,
-		ed:      ed,
-		midiIn:  make(chan inEvent, 128),
-		events:  make(chan tcell.Event, 128),
-		recPath: recPath,
+		screen:     screen,
+		song:       song,
+		midi:       mid,
+		player:     player,
+		ed:         ed,
+		midiIn:     make(chan inEvent, 128),
+		events:     make(chan tcell.Event, 128),
+		recPath:    recPath,
+		rescanTick: make(chan struct{}, 1),
+		rescanDone: make(chan bool, 1),
 	}
 	player.setEditBlock(ed.editBlock)
 
@@ -183,6 +194,29 @@ func run() error {
 
 	defer player.stop()
 	defer mid.close()
+	// Wait for any in-flight rescan goroutine before tearing the engine down,
+	// so we never run Terminate from two goroutines at once.
+	defer app.rescanWG.Wait()
+
+	// Periodically nudge the main loop to rescan MIDI devices while the
+	// patchbay is open, so hot-plugged gear appears without a restart.
+	pollStop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(2 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-pollStop:
+				return
+			case <-t.C:
+				select {
+				case app.rescanTick <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+	defer close(pollStop)
 
 	// tcell event pump.
 	quitPump := make(chan struct{})
@@ -208,6 +242,36 @@ func run() error {
 	app.saveRecovery()
 	saveAppConfig(app)
 	return nil
+}
+
+// tryRescan launches a background MIDI device rescan unless one is already
+// running. Automatic (ticker-driven) rescans only run while the patchbay is
+// open and the transport is stopped, so they never glitch a live performance;
+// a manual rescan (force=true) runs regardless. The rescan itself happens in a
+// goroutine so the UI never stalls on the PortMidi re-enumeration.
+func (a *App) tryRescan(force bool) {
+	if a.rescanInFlight || !a.midi.isAvailable() {
+		return
+	}
+	if !force && (a.ed.view != ViewPatch || a.player.isPlaying()) {
+		return
+	}
+	a.rescanInFlight = true
+	a.rescanWG.Add(1)
+	go func() {
+		defer a.rescanWG.Done()
+		a.rescanDone <- a.midi.rescan() // buffered (cap 1); never blocks
+	}()
+}
+
+// finishRescan applies the result of a completed rescan to the UI.
+func (a *App) finishRescan(changed bool) {
+	a.rescanInFlight = false
+	if changed {
+		a.ed.chanMenuOut = -1 // a removed output may no longer exist
+		a.ed.status = fmt.Sprintf("MIDI devices updated: %d in, %d out",
+			a.midi.numInputs()-1, a.midi.numOutputs())
+	}
 }
 
 // saveRecovery writes the current song to the crash-recovery file. Encodes
@@ -257,6 +321,10 @@ func (a *App) loop() {
 		case <-ticker.C:
 		case mev := <-a.midiIn:
 			a.applyPunch(mev.on, mev.note, mev.vel, mev.ch)
+		case <-a.rescanTick:
+			a.tryRescan(false)
+		case changed := <-a.rescanDone:
+			a.finishRescan(changed)
 		}
 
 		// Drain anything else that's queued so a key-repeat flood collapses
