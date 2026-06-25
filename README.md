@@ -53,9 +53,16 @@ ncurses, with live pattern editing for MIDI "looping".
   finishes the current block before switching (no abrupt jump). The Tracker
   source also emits MIDI clock + start/stop to its patched outputs.
 * **Transport in the top bar** with glyph buttons — `▶` play, `■` stop,
-  `●` record-arm, `⟲`/`⟳` song/loop mode, `⚠` panic — plus an editable
+  `●` record, `»` thru, `⟲`/`⟳` song/loop mode, `⚠` panic — plus an editable
   **BPM** field, a **time-signature dropdown** (3/4, 4/4, 5/4), and **Edit /
-  Patchbay** view tabs.
+  Patchbay / Settings** view tabs.
+* **MIDI note latch.** Two independent toggles decide what incoming notes do:
+  **Record** (`●` / `F5`) writes them into the tracker, **Thru** (`»` /
+  `Ctrl+T`) forwards them to the patched outputs. The combination is the latch
+  mode — **Playback** (thru only), **Record** (record only), **Both**, or
+  **Off** — shown by the two lit toolbar indicators.
+* **Settings tab** (`F4` cycles to it): a default project folder, the MIDI
+  latch toggles, and a scrollable reference of every hotkey.
 * **MIDI patchbay** (the **Patchbay** tab, or `F4`). A routing matrix where
   columns are MIDI inputs and rows are MIDI outputs; a `*` at an intersection
   (click or `Enter`) connects that input to that output. A special **Trk**
@@ -174,8 +181,8 @@ Application state lives in the per-user config directory each OS expects
 It contains:
 
 - **`config.json`** — preferences saved on exit: the patchbay routing and
-  channel filters (restored by device name), the tracker/roll pane split, and
-  the last project path.
+  channel filters (restored by device name), the tracker/roll pane split, the
+  default save folder and MIDI-thru state, and the last project path.
 - **`recovery.sng`** — the working song, **autosaved every 10 s and on exit**.
   On the next launch (when no file is given with `-load`) it is restored
   automatically, so unsaved edits survive a crash or an unclean exit. Use
@@ -190,12 +197,13 @@ Global:
 | `Space` | Play / Stop from the arrangement cursor |
 | `Tab` | Toggle focus tracker ↔ arrangement |
 | `F2` / `F3` | Focus tracker / arrangement |
-| `F5` | Toggle record-arm (punch-in) |
+| `F5` | Toggle record (latch: record incoming notes) |
+| `Ctrl+T` | Toggle thru (latch: forward incoming notes to outputs) |
 | `F6` | Toggle loop mode (Song = play once / Loop = loop region) |
 | `F7` | Toggle follow-playhead |
 | `F8` | Panic (all notes off) |
 | `F9` | Edit BPM field (type, `Enter` confirm, `Esc` cancel) |
-| `F4` | Toggle Edit / Patchbay view |
+| `F4` | Cycle Edit / Patchbay / Settings views |
 | `Ctrl+S` / `Ctrl+O` | Save / Open project (path dialog) |
 | `Ctrl+E` | Export to MIDI (path dialog) |
 | `F1` | Open the help overlay (any key/click closes it) |

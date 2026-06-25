@@ -29,6 +29,8 @@ func TestConfigRoundTrip(t *testing.T) {
 	c := Config{
 		LowerH:   12,
 		LastPath: "/songs/x.sng",
+		SaveDir:  "/songs",
+		NoThru:   true,
 		Patch:    []string{"Tracker>>IAC Bus 1", "Keystation>>IAC Bus 1"},
 		Filters:  map[string][]int{"IAC Bus 1": {0, 1, 2}},
 	}
@@ -36,7 +38,7 @@ func TestConfigRoundTrip(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 	got := loadConfig()
-	if got.LowerH != c.LowerH || got.LastPath != c.LastPath {
+	if got.LowerH != c.LowerH || got.LastPath != c.LastPath || got.SaveDir != c.SaveDir || got.NoThru != c.NoThru {
 		t.Errorf("scalars: got %+v, want %+v", got, c)
 	}
 	if len(got.Patch) != 2 || got.Patch[0] != "Tracker>>IAC Bus 1" {
@@ -44,6 +46,39 @@ func TestConfigRoundTrip(t *testing.T) {
 	}
 	if chans := got.Filters["IAC Bus 1"]; len(chans) != 3 || chans[2] != 2 {
 		t.Errorf("filters round-trip: %v", got.Filters)
+	}
+}
+
+func TestLatchMode(t *testing.T) {
+	e := newEditor()
+	for _, c := range []struct {
+		armed, thru bool
+		want        string
+	}{
+		{false, true, "Playback"},
+		{true, false, "Record"},
+		{true, true, "Both"},
+		{false, false, "Off"},
+	} {
+		e.armed, e.thru = c.armed, c.thru
+		if got := e.latchMode(); got != c.want {
+			t.Errorf("armed=%v thru=%v -> %q, want %q", c.armed, c.thru, got, c.want)
+		}
+	}
+}
+
+func TestSetNoteThru(t *testing.T) {
+	m := fakeEngine([]string{"A"}, []string{"K"})
+	if m.noThru {
+		t.Errorf("default should forward notes (noThru=false)")
+	}
+	m.setNoteThru(false)
+	if !m.noThru {
+		t.Errorf("setNoteThru(false) should set noThru")
+	}
+	m.setNoteThru(true)
+	if m.noThru {
+		t.Errorf("setNoteThru(true) should clear noThru")
 	}
 }
 

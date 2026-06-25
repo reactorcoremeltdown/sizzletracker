@@ -72,7 +72,18 @@ type MidiEngine struct {
 	routes [][]bool
 	filter [][]bool
 
+	// noThru disables forwarding incoming *notes* to outputs (the latch
+	// "record only" / "off" modes). CC/PC and the Tracker source are unaffected.
+	noThru bool
+
 	onIn func(on bool, note, vel, ch int)
+}
+
+// setNoteThru enables/disables forwarding of incoming notes to outputs.
+func (m *MidiEngine) setNoteThru(on bool) {
+	m.mu.Lock()
+	m.noThru = !on
+	m.mu.Unlock()
 }
 
 func newMidiEngine() *MidiEngine {
@@ -381,9 +392,14 @@ func (m *MidiEngine) listen(hi int, str *portmidi.Stream, stop chan struct{}) {
 
 func (m *MidiEngine) forwardFrom(in, status, d1, d2 int) {
 	hi := status & 0xf0
+	isNote := hi == 0x80 || hi == 0x90
 	isChan := hi >= 0x80 && hi <= 0xE0
 	ch := status & 0x0f
 	m.mu.Lock()
+	if isNote && m.noThru {
+		m.mu.Unlock()
+		return // note thru disabled by the latch mode
+	}
 	var outs []int
 	if in >= 0 && in < len(m.routes) {
 		for o := 0; o < len(m.outs); o++ {

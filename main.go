@@ -148,6 +148,9 @@ func run() error {
 	if cfg.LowerH > 0 {
 		ed.lowerH = cfg.LowerH
 	}
+	ed.saveDir = cfg.SaveDir
+	ed.thru = !cfg.NoThru
+	mid.setNoteThru(ed.thru)
 	switch {
 	case *loadPath != "":
 		ed.projPath = *loadPath
@@ -225,6 +228,8 @@ func saveAppConfig(a *App) {
 	cfg := Config{
 		LowerH:   a.ed.lowerH,
 		LastPath: a.ed.projPath,
+		SaveDir:  a.ed.saveDir,
+		NoThru:   !a.ed.thru,
 		Patch:    routes,
 		Filters:  filters,
 	}

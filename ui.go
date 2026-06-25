@@ -92,6 +92,7 @@ const (
 	glyphPlay  = "▶"
 	glyphStop  = "■"
 	glyphRec   = "●"
+	glyphThru  = "»" // note thru (forward input notes to outputs)
 	glyphLoop  = "⟲" // loop-song  (anticlockwise = "round trip the arrangement")
 	glyphLoop1 = "⟳" // loop-block (clockwise gapped = "tight repeat")
 	glyphPanic = "⚠"
@@ -211,9 +212,12 @@ func (a *App) draw() {
 	fr := a.snapshot()
 
 	a.drawTopBar(0, w, fr)
-	if a.ed.view == ViewPatch {
+	switch a.ed.view {
+	case ViewPatch:
 		a.drawPatchbay(1, h-2, w)
-	} else {
+	case ViewSettings:
+		a.drawSettings(1, h-2, w)
+	default:
 		trackerH, sepY, arrangeY, lowerH := a.layout(h)
 		a.drawTracker(1, trackerH, w, fr)
 		a.drawSeparator(sepY, w)
@@ -458,6 +462,77 @@ func (a *App) drawChanMenu(o, w, h int) {
 	}
 }
 
+// --- Settings ------------------------------------------------------------
+
+func (a *App) drawSettings(top, height, w int) {
+	y := top
+	a.put(y, 0, "SETTINGS", styAccent)
+	y += 2
+
+	// Project section.
+	a.put(y, 2, "Project", styAccent)
+	y++
+	a.put(y, 4, "Default save folder:", styNormal)
+	dir := a.ed.saveDir
+	if dir == "" {
+		dir = "(current directory)"
+	}
+	fld := " " + trunc(dir, w-30) + " "
+	a.put(y, 26, fld, styBtn)
+	a.ed.addRegion(Region{x: 26, y: y, w: cellWidth(fld), h: 1, action: ActSettingsDir})
+	y += 2
+
+	// MIDI input latch section.
+	a.put(y, 2, "MIDI input latch", styAccent)
+	y++
+	a.put(y, 4, "Record notes (F5)", styNormal)
+	a.put(y, 26, onOffLabel(a.ed.armed), onOffStyle(a.ed.armed))
+	a.ed.addRegion(Region{x: 26, y: y, w: 5, h: 1, action: ActRecord})
+	y++
+	a.put(y, 4, "Thru notes (Ctrl+T)", styNormal)
+	a.put(y, 26, onOffLabel(a.ed.thru), onOffStyle(a.ed.thru))
+	a.ed.addRegion(Region{x: 26, y: y, w: 5, h: 1, action: ActThru})
+	y++
+	a.put(y, 4, "Mode: "+a.ed.latchMode()+"   (Playback=thru only, Record=record only, Both)", styDim)
+	y += 2
+
+	// Hotkey reference (scrollable).
+	a.put(y, 2, "Hotkeys (Up/Down to scroll)", styAccent)
+	y++
+	listH := top + height - y
+	if listH < 1 {
+		listH = 1
+	}
+	a.ed.settingsScroll = clampInt(a.ed.settingsScroll, 0, max(0, len(helpLines)-listH))
+	for i := 0; i < listH; i++ {
+		idx := a.ed.settingsScroll + i
+		if idx >= len(helpLines) {
+			break
+		}
+		line := helpLines[idx]
+		sty := styNormal
+		if strings.HasPrefix(line, "# ") {
+			line = line[2:]
+			sty = styAccent
+		}
+		a.put(y+i, 4, trunc(line, w-5), sty)
+	}
+}
+
+func onOffLabel(on bool) string {
+	if on {
+		return " ON  "
+	}
+	return " off "
+}
+
+func onOffStyle(on bool) tcell.Style {
+	if on {
+		return styBtnOn
+	}
+	return styBtn
+}
+
 // --- Top bar -------------------------------------------------------------
 
 func (a *App) button(y, x int, label string, on bool, act RegionAction) int {
@@ -488,7 +563,9 @@ func (a *App) drawTopBar(y, w int, fr *frame) {
 
 	x = a.button(y, x, glyphPlay, fr.playing, ActPlay)
 	x = a.button(y, x, glyphStop, false, ActStop)
+	// MIDI note latch indicators: Record (●) and Thru (»).
 	x = a.button(y, x, glyphRec, a.ed.armed, ActRecord)
+	x = a.button(y, x, glyphThru, a.ed.thru, ActThru)
 
 	loopGlyph := glyphLoop
 	if fr.loop == LoopRegion {
@@ -527,7 +604,8 @@ func (a *App) drawTopBar(y, w int, fr *frame) {
 
 	// View tabs (replace the old MIDI out/in fields).
 	x = a.button(y, x, "Edit", a.ed.view == ViewEdit, ActTabEdit)
-	a.button(y, x, "Patchbay", a.ed.view == ViewPatch, ActTabPatch)
+	x = a.button(y, x, "Patchbay", a.ed.view == ViewPatch, ActTabPatch)
+	a.button(y, x, "Settings", a.ed.view == ViewSettings, ActTabSettings)
 }
 
 // putRegion draws s and registers a hit-region of the correct cell width.
@@ -949,13 +1027,14 @@ func (a *App) drawStatus(y, w int) {
 
 var helpLines = []string{
 	"# Transport (top bar)",
-	"  ▶ play/stop   ■ stop   ● rec   ⟲/⟳ loop   ⚠ panic",
-	"  File, Edit/Patchbay tabs, BPM and Sig are clickable.",
+	"  ▶ play/stop   ■ stop   ● rec   » thru   ⟲/⟳ loop   ⚠ panic",
+	"  File, Edit/Patchbay/Settings tabs, BPM and Sig are clickable.",
 	"",
 	"# Global",
 	"  Space play/stop   Tab switch pane   F1 help   F2/F3 focus",
-	"  F4 Edit/Patchbay   F5 rec   F6 loop   F7 follow   F8 panic",
-	"  F9 BPM   F10 quit",
+	"  F4 cycle views   F5 record   Ctrl+T thru   F6 loop   F7 follow",
+	"  F8 panic   F9 BPM   F10 quit",
+	"  MIDI latch = Record (F5) + Thru (Ctrl+T): Playback/Record/Both/Off",
 	"",
 	"# Files (File menu, or keys)",
 	"  Ctrl+S save   Ctrl+O open   Ctrl+E export MIDI",

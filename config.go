@@ -20,8 +20,10 @@ const appName = "sizzletracker"
 type Config struct {
 	LowerH   int              `json:"lower_h,omitempty"`
 	LastPath string           `json:"last_path,omitempty"`
-	Patch    []string         `json:"patch,omitempty"`   // "input>>output" routes
-	Filters  map[string][]int `json:"filters,omitempty"` // output -> passing channels
+	SaveDir  string           `json:"save_dir,omitempty"` // default folder for new projects
+	NoThru   bool             `json:"no_thru,omitempty"`  // MIDI note thru disabled (default: on)
+	Patch    []string         `json:"patch,omitempty"`    // "input>>output" routes
+	Filters  map[string][]int `json:"filters,omitempty"`  // output -> passing channels
 }
 
 // appDir returns (and creates) the application's config directory.

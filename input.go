@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +79,9 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 		case tcell.KeyF5:
 			a.toggleArm()
 			return true
+		case tcell.KeyCtrlT:
+			a.toggleThru()
+			return true
 		case tcell.KeyF6:
 			a.toggleLoop()
 			return true
@@ -100,7 +104,7 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 			a.fileOption(0) // Save (opens Save As dialog if no path yet)
 			return true
 		case tcell.KeyCtrlO:
-			a.openDialog(DlgOpen, "Open project:", a.ed.projPath)
+			a.openDialog(DlgOpen, "Open project:", a.defaultName(""))
 			return true
 		case tcell.KeyCtrlE:
 			a.openDialog(DlgExport, "Export MIDI to:", a.defaultMidiName())
@@ -122,25 +126,49 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 	case FocusLen:
 		a.handleLenKey(k, r)
 	default:
-		if a.ed.view == ViewPatch {
+		switch a.ed.view {
+		case ViewPatch:
 			a.handlePatchKey(k, r)
-		} else if a.ed.focus == FocusArrange {
-			a.handleArrangeKey(k, r, mod)
-		} else {
-			a.handleTrackerKey(k, r, mod)
+		case ViewSettings:
+			a.handleSettingsKey(k, r)
+		default:
+			if a.ed.focus == FocusArrange {
+				a.handleArrangeKey(k, r, mod)
+			} else {
+				a.handleTrackerKey(k, r, mod)
+			}
 		}
 	}
 	return true
 }
 
+// toggleView cycles Edit -> Patchbay -> Settings -> Edit.
 func (a *App) toggleView() {
-	if a.ed.view == ViewEdit {
+	switch a.ed.view {
+	case ViewEdit:
 		a.ed.view = ViewPatch
-		a.ed.status = "MIDI patchbay (F4 to return)"
-	} else {
+		a.ed.status = "MIDI patchbay (F4 cycles views)"
+	case ViewPatch:
+		a.ed.view = ViewSettings
+		a.ed.status = "Settings (F4 cycles views)"
+	default:
 		a.ed.view = ViewEdit
 	}
 	a.ed.chanMenuOut = -1
+}
+
+// handleSettingsKey scrolls the hotkey reference in the settings view.
+func (a *App) handleSettingsKey(k tcell.Key, r rune) {
+	switch k {
+	case tcell.KeyUp:
+		a.ed.settingsScroll = clampInt(a.ed.settingsScroll-1, 0, len(helpLines))
+	case tcell.KeyDown:
+		a.ed.settingsScroll = clampInt(a.ed.settingsScroll+1, 0, len(helpLines))
+	case tcell.KeyPgUp:
+		a.ed.settingsScroll = clampInt(a.ed.settingsScroll-8, 0, len(helpLines))
+	case tcell.KeyPgDn:
+		a.ed.settingsScroll = clampInt(a.ed.settingsScroll+8, 0, len(helpLines))
+	}
 }
 
 // handlePatchKey drives the patchbay matrix cursor and connections.
@@ -269,12 +297,12 @@ func (a *App) fileOption(i int) {
 			a.doSave(a.ed.projPath)
 			a.ed.showFile = false
 		} else {
-			a.openDialog(DlgSave, "Save project as:", "song.sng")
+			a.openDialog(DlgSave, "Save project as:", a.defaultProjectPath())
 		}
 	case 1: // Save As...
-		a.openDialog(DlgSave, "Save project as:", a.defaultName("song.sng"))
+		a.openDialog(DlgSave, "Save project as:", a.defaultName(a.defaultProjectPath()))
 	case 2: // Open...
-		a.openDialog(DlgOpen, "Open project:", a.ed.projPath)
+		a.openDialog(DlgOpen, "Open project:", a.defaultName(""))
 	case 3: // Export MIDI...
 		a.openDialog(DlgExport, "Export MIDI to:", a.defaultMidiName())
 	case 4: // Exit
@@ -294,6 +322,9 @@ func (a *App) defaultMidiName() string {
 	if a.ed.projPath != "" {
 		return strings.TrimSuffix(a.ed.projPath, ".sng") + ".mid"
 	}
+	if a.ed.saveDir != "" {
+		return filepath.Join(a.ed.saveDir, "song.mid")
+	}
 	return "song.mid"
 }
 
@@ -301,6 +332,15 @@ func (a *App) executeDialog() {
 	path := strings.TrimSpace(a.ed.dlgBuf)
 	a.ed.showDialog = false
 	a.ed.focus = FocusTracker
+	if a.ed.dlgAction == DlgSaveDir { // empty is allowed (= current dir)
+		a.ed.saveDir = path
+		if path == "" {
+			a.ed.status = "Default save folder cleared"
+		} else {
+			a.ed.status = "Default save folder: " + path
+		}
+		return
+	}
 	if path == "" {
 		a.ed.status = "Cancelled (empty path)"
 		return
@@ -861,11 +901,23 @@ func (a *App) selectSig(i int) {
 
 func (a *App) toggleArm() {
 	a.ed.armed = !a.ed.armed
-	if a.ed.armed {
-		a.ed.status = "Record ARMED - MIDI input punches in at cursor/playhead"
-	} else {
-		a.ed.status = "Record off"
+	a.ed.status = "MIDI latch: " + a.ed.latchMode()
+}
+
+// toggleThru flips note thru (forwarding incoming notes to the patched outputs).
+func (a *App) toggleThru() {
+	a.ed.thru = !a.ed.thru
+	a.midi.setNoteThru(a.ed.thru)
+	a.ed.status = "MIDI latch: " + a.ed.latchMode()
+}
+
+// defaultProjectPath is the suggested path for a new project (save dialog),
+// rooted in the configured save folder.
+func (a *App) defaultProjectPath() string {
+	if a.ed.saveDir != "" {
+		return filepath.Join(a.ed.saveDir, "song.sng")
 	}
+	return "song.sng"
 }
 
 func (a *App) toggleLoop() {
@@ -1019,6 +1071,8 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		a.player.stop()
 	case ActRecord:
 		a.toggleArm()
+	case ActThru:
+		a.toggleThru()
 	case ActLoopMode:
 		a.toggleLoop()
 	case ActPanic:
@@ -1058,6 +1112,11 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	case ActTabPatch:
 		a.ed.view = ViewPatch
 		a.ed.chanMenuOut = -1
+	case ActTabSettings:
+		a.ed.view = ViewSettings
+		a.ed.chanMenuOut = -1
+	case ActSettingsDir:
+		a.openDialog(DlgSaveDir, "Default save folder:", a.ed.saveDir)
 	case ActPatchCell:
 		a.ed.patchIn = reg.data1
 		a.ed.patchOut = reg.data2

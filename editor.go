@@ -7,6 +7,7 @@ type View int
 const (
 	ViewEdit View = iota
 	ViewPatch
+	ViewSettings
 )
 
 // Focus identifies which pane currently receives keyboard input.
@@ -27,6 +28,7 @@ const (
 	DlgSave DialogAction = iota
 	DlgOpen
 	DlgExport
+	DlgSaveDir // edit the default save folder
 )
 
 // Column indices within a track.
@@ -48,14 +50,17 @@ const (
 	ActLoopMode
 	ActPanic
 	ActBPM
-	ActTimeSig    // open the time-signature dropdown
-	ActSigOption  // data1=index into timeSigs
-	ActStepMenu   // open the line-skip dropdown
-	ActStepOption // data1=index into stepOptions
-	ActFileMenu   // open the File dropdown
-	ActFileOption // data1=index into fileMenu
-	ActTabEdit    // switch to the editor view
-	ActTabPatch   // switch to the patchbay view
+	ActTimeSig     // open the time-signature dropdown
+	ActSigOption   // data1=index into timeSigs
+	ActStepMenu    // open the line-skip dropdown
+	ActStepOption  // data1=index into stepOptions
+	ActFileMenu    // open the File dropdown
+	ActFileOption  // data1=index into fileMenu
+	ActTabEdit     // switch to the editor view
+	ActTabPatch    // switch to the patchbay view
+	ActTabSettings // switch to the settings view
+	ActThru        // toggle MIDI note thru (forward input notes to outputs)
+	ActSettingsDir // edit the default save folder
 	// Patchbay.
 	ActPatchCell   // data1=input, data2=output (toggle a connection)
 	ActChanMenu    // data1=output (open the channel-filter dropdown)
@@ -132,9 +137,16 @@ type Editor struct {
 	// Marker clipboard (rectangle of beat-markers).
 	markClip [][]bool
 
-	// Recording / punch-in.
+	// MIDI note latch: armed records incoming notes into the tracker; thru
+	// forwards incoming notes to the patched outputs. Together they form the
+	// latch mode (Playback / Record / Both / Off).
 	armed bool
+	thru  bool
 	punch map[int]punchInfo
+
+	// Settings.
+	saveDir        string // default folder for new projects
+	settingsScroll int    // scroll offset of the hotkey reference
 
 	// Modal overlays.
 	showHelp bool
@@ -187,9 +199,24 @@ func newEditor() *Editor {
 		octave:      4,
 		step:        1,
 		follow:      true,
+		thru:        true, // monitor the controller by default (Playback latch)
 		punch:       make(map[int]punchInfo),
 		chanMenuOut: -1,
 		status:      "Ready. Press F1 for help.",
+	}
+}
+
+// latchMode names the current MIDI note latch from (armed, thru).
+func (e *Editor) latchMode() string {
+	switch {
+	case e.armed && e.thru:
+		return "Both"
+	case e.armed:
+		return "Record"
+	case e.thru:
+		return "Playback"
+	default:
+		return "Off"
 	}
 }
 
