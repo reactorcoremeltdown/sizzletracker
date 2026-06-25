@@ -202,6 +202,9 @@ fill the run (and restarting after any gap).
 - **Right-click** at the start of a bar toggles the **whole bar**.
 - With the keyboard: move the cursor and press **`.`** (toggle beat) or
   **Enter** (place the block across its length).
+- **`.` with a selection** toggles **every selected beat** at once: if they are
+  all already marked it clears them, otherwise it marks them all. Make a
+  selection by dragging or with Shift+arrows first.
 - **Delete** erases; **c / x / v** copy / cut / paste a rectangle of markers.
 
 ### Managing block rows
@@ -443,7 +446,7 @@ Enlarge the window; the UI needs roughly 40×8 minimum and is comfortable at
 | Double-click | Toggle a beat |
 | Right-click | Toggle a whole bar |
 | Enter | Place block across its length |
-| `.` | Toggle beat |
+| `.` | Toggle beat (or all selected beats) |
 | Delete | Erase |
 | `c` / `x` / `v` | Copy / cut / paste markers |
 | `l` | Mark selected bars as the loop region |

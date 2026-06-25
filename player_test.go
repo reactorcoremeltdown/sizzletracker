@@ -25,6 +25,57 @@ func TestRollToggleBar(t *testing.T) {
 	}
 }
 
+func TestRollToggleSelection(t *testing.T) {
+	s := newSong()
+	app := &App{song: s, player: newPlayer(s, &MidiEngine{}), ed: newEditor()}
+	for b := range s.Roll[0] {
+		s.Roll[0][b] = false
+	}
+	app.ed.focus = FocusArrange
+
+	// Select beats 2..5 on block 0 (cursor at one corner, anchor at the other).
+	app.ed.editBlock, app.ed.rollBeat = 0, 5
+	app.ed.selActive = true
+	app.ed.selRow, app.ed.selBeat = 0, 2
+
+	// First '.' marks every selected beat (none were set).
+	app.rollToggle()
+	for b := 0; b < len(s.Roll[0]); b++ {
+		want := b >= 2 && b <= 5
+		if s.rollGet(0, b) != want {
+			t.Errorf("after mark: beat %d = %v, want %v", b, s.rollGet(0, b), want)
+		}
+	}
+	if !app.ed.selActive {
+		t.Errorf("selection should remain active after toggling")
+	}
+
+	// Second '.' clears them (all were set).
+	app.rollToggle()
+	for b := 2; b <= 5; b++ {
+		if s.rollGet(0, b) {
+			t.Errorf("after clear: beat %d should be off", b)
+		}
+	}
+
+	// A partially-marked selection fills (does not clear).
+	s.rollSet(0, 3, true)
+	app.rollToggle()
+	for b := 2; b <= 5; b++ {
+		if !s.rollGet(0, b) {
+			t.Errorf("partial selection should fill: beat %d should be on", b)
+		}
+	}
+
+	// With no selection, '.' toggles only the cursor cell.
+	app.ed.selActive = false
+	app.ed.rollBeat = 10
+	app.rollToggle()
+	if !s.rollGet(0, 10) || s.rollGet(0, 11) {
+		t.Errorf("no-selection toggle should affect only the cursor beat")
+	}
+}
+
 func TestLoopRegionTicks(t *testing.T) {
 	s := newSong() // 4/4: beatsPerBar=4, ticksPerBeat=4 -> barTicks=16
 	s.LoopBar0, s.LoopBar1 = 1, 2

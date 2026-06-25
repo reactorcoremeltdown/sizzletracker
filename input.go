@@ -821,10 +821,43 @@ func (a *App) rollMove(dr, db int, shift bool) {
 }
 
 func (a *App) rollToggle() {
+	if a.ed.selActive {
+		a.rollToggleSel()
+		return
+	}
 	a.song.mu.Lock()
 	v := a.song.rollGet(a.ed.editBlock, a.ed.rollBeat)
 	a.song.rollSet(a.ed.editBlock, a.ed.rollBeat, !v)
 	a.song.mu.Unlock()
+}
+
+// rollToggleSel toggles every beat in the current selection rectangle: if all
+// of them are already marked it clears them, otherwise it marks them all. The
+// selection is kept active so it can be toggled again.
+func (a *App) rollToggleSel() {
+	r0, b0, r1, b1 := a.ed.rollSelRect()
+	a.song.mu.Lock()
+	allSet := true
+	for r := r0; r <= r1 && allSet; r++ {
+		for b := b0; b <= b1; b++ {
+			if !a.song.rollGet(r, b) {
+				allSet = false
+				break
+			}
+		}
+	}
+	for r := r0; r <= r1; r++ {
+		for b := b0; b <= b1; b++ {
+			a.song.rollSet(r, b, !allSet)
+		}
+	}
+	a.song.mu.Unlock()
+	n := (r1 - r0 + 1) * (b1 - b0 + 1)
+	if allSet {
+		a.ed.status = fmt.Sprintf("Cleared %d beat(s)", n)
+	} else {
+		a.ed.status = fmt.Sprintf("Marked %d beat(s)", n)
+	}
 }
 
 func (a *App) rollPaintCursor() {
