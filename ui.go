@@ -35,6 +35,14 @@ var (
 	styRollOdd  tcell.Style // faint background for odd piano-roll rows
 	styRollBar  tcell.Style // bar gridline in the piano roll
 	styLoopBar  tcell.Style // looped bar number in the ruler
+
+	// Settings tab: full-width section banners + a bright text-field panel
+	// for the scrollable hotkey reference.
+	stySecProj  tcell.Style
+	stySecMidi  tcell.Style
+	stySecKeys  tcell.Style
+	styKeyPanel tcell.Style
+	styKeyHdr   tcell.Style
 )
 
 func initStyles() {
@@ -54,6 +62,11 @@ func initStyles() {
 	styRollOdd = def.Background(tcell.NewRGBColor(38, 38, 46))
 	styRollBar = def.Foreground(tcell.ColorGray)
 	styLoopBar = def.Foreground(tcell.ColorRed).Bold(true)
+	stySecProj = def.Background(tcell.ColorNavy).Foreground(tcell.ColorWhite).Bold(true)
+	stySecMidi = def.Background(tcell.ColorPurple).Foreground(tcell.ColorWhite).Bold(true)
+	stySecKeys = def.Background(tcell.ColorTeal).Foreground(tcell.ColorBlack).Bold(true)
+	styKeyPanel = def.Background(tcell.NewRGBColor(46, 52, 84)).Foreground(tcell.ColorWhite)
+	styKeyHdr = styKeyPanel.Foreground(tcell.ColorYellow).Bold(true)
 }
 
 // put writes s at (y, x) with the given style. tcell's PutStrStyled walks
@@ -464,14 +477,21 @@ func (a *App) drawChanMenu(o, w, h int) {
 
 // --- Settings ------------------------------------------------------------
 
+// sectionBanner paints a full-width colored header bar to divide a settings
+// section from the one above, and returns the y of the first content row.
+func (a *App) sectionBanner(y, w int, title string, st tcell.Style) int {
+	a.fill(y, 0, w, ' ', st)
+	a.put(y, 2, title, st)
+	return y + 1
+}
+
 func (a *App) drawSettings(top, height, w int) {
 	y := top
 	a.put(y, 0, "SETTINGS", styAccent)
 	y += 2
 
 	// Project section.
-	a.put(y, 2, "Project", styAccent)
-	y++
+	y = a.sectionBanner(y, w, " Project ", stySecProj)
 	a.put(y, 4, "Default save folder:", styNormal)
 	dir := a.ed.saveDir
 	if dir == "" {
@@ -483,8 +503,7 @@ func (a *App) drawSettings(top, height, w int) {
 	y += 2
 
 	// MIDI input latch section.
-	a.put(y, 2, "MIDI input latch", styAccent)
-	y++
+	y = a.sectionBanner(y, w, " MIDI input latch ", stySecMidi)
 	a.put(y, 4, "Record notes (F5)", styNormal)
 	a.put(y, 26, onOffLabel(a.ed.armed), onOffStyle(a.ed.armed))
 	a.ed.addRegion(Region{x: 26, y: y, w: 5, h: 1, action: ActRecord})
@@ -496,24 +515,25 @@ func (a *App) drawSettings(top, height, w int) {
 	a.put(y, 4, "Mode: "+a.ed.latchMode()+"   (Playback=thru only, Record=record only, Both)", styDim)
 	y += 2
 
-	// Hotkey reference (scrollable).
-	a.put(y, 2, "Hotkeys (Up/Down to scroll)", styAccent)
-	y++
+	// Hotkey reference: a bright, text-field-style panel that fills the
+	// remaining height; lines scroll within it.
+	y = a.sectionBanner(y, w, " Hotkeys (Up/Down to scroll) ", stySecKeys)
 	listH := top + height - y
 	if listH < 1 {
 		listH = 1
 	}
 	a.ed.settingsScroll = clampInt(a.ed.settingsScroll, 0, max(0, len(helpLines)-listH))
 	for i := 0; i < listH; i++ {
+		a.fill(y+i, 0, w, ' ', styKeyPanel) // paint the panel background
 		idx := a.ed.settingsScroll + i
 		if idx >= len(helpLines) {
-			break
+			continue
 		}
 		line := helpLines[idx]
-		sty := styNormal
+		sty := styKeyPanel
 		if strings.HasPrefix(line, "# ") {
 			line = line[2:]
-			sty = styAccent
+			sty = styKeyHdr
 		}
 		a.put(y+i, 4, trunc(line, w-5), sty)
 	}
