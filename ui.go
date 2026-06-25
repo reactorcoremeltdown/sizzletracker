@@ -255,6 +255,9 @@ func (a *App) draw() {
 	if a.ed.showHelp {
 		a.drawHelp(h, w)
 	}
+	if a.ed.showAbout {
+		a.drawAbout(h, w)
+	}
 	if a.ed.showDialog {
 		a.drawDialog(h, w)
 	}
@@ -648,7 +651,8 @@ func (a *App) drawTopBar(y, w int, fr *frame) {
 	// View tabs (replace the old MIDI out/in fields).
 	x = a.button(y, x, "Edit", a.ed.view == ViewEdit, ActTabEdit)
 	x = a.button(y, x, "Patchbay", a.ed.view == ViewPatch, ActTabPatch)
-	a.button(y, x, "Settings", a.ed.view == ViewSettings, ActTabSettings)
+	x = a.button(y, x, "Settings", a.ed.view == ViewSettings, ActTabSettings)
+	a.button(y, x, "About", a.ed.showAbout, ActAbout)
 }
 
 // putRegion draws s and registers a hit-region of the correct cell width.
@@ -1118,7 +1122,7 @@ func (a *App) drawStatus(y, w int) {
 var helpLines = []string{
 	"# Transport (top bar)",
 	"  ▶ play/stop   ■ stop   ● rec   » thru   ⟲/⟳ loop   ⚠ panic",
-	"  File, Edit/Patchbay/Settings tabs, BPM and Sig are clickable.",
+	"  File, Edit/Patchbay/Settings/About, BPM and Sig are clickable.",
 	"",
 	"# Global",
 	"  Space play/stop   Tab switch pane   F1 help   F2/F3 focus",
@@ -1209,6 +1213,64 @@ func (a *App) drawHelp(h, w int) {
 		a.put(ry, x0+2, line, sty)
 	}
 	a.put(hintRow, x0+2, "Press any key to close this help.", styHeader.Bold(true))
+}
+
+// aboutLines is the content of the About popup. ASCII-only, like the help
+// overlay, so it renders identically on every terminal and font.
+var aboutLines = []string{
+	"sizzletracker",
+	"A terminal MIDI tracker / step sequencer.",
+	"",
+	"Version:  " + appVersion,
+	"Author:   Azer Abdullaev (Reactorcoremeltdown)",
+	"",
+	"GitHub:   https://github.com/reactorcoremeltdown/sizzletracker",
+	"Support:  https://rcmd.space/s",
+	"",
+	"Copyright (C) 2026 Azer Abdullaev",
+	"License:  GNU GPL v3.0 or later (see LICENSE)",
+}
+
+func (a *App) drawAbout(h, w int) {
+	bw := 66
+	if bw > w-2 {
+		bw = w - 2
+	}
+	bh := len(aboutLines) + 4 // top/bottom border, title, close hint
+	if bh > h-2 {
+		bh = h - 2
+	}
+	x0 := (w - bw) / 2
+	y0 := (h - bh) / 2
+
+	for r := 0; r < bh; r++ {
+		a.fill(y0+r, x0, bw, ' ', styHeader)
+	}
+	border := styHeader.Bold(true)
+	hbar := "+" + strings.Repeat("-", bw-2) + "+"
+	a.put(y0, x0, hbar, border)
+	a.put(y0+bh-1, x0, hbar, border)
+	for i := 1; i < bh-1; i++ {
+		a.put(y0+i, x0, "|", border)
+		a.put(y0+i, x0+bw-1, "|", border)
+	}
+
+	title := " About "
+	a.put(y0, x0+(bw-cellWidth(title))/2, title, border)
+
+	hintRow := y0 + bh - 2
+	for i, line := range aboutLines {
+		ry := y0 + 1 + i
+		if ry >= hintRow {
+			break
+		}
+		sty := styHeader
+		if i == 0 { // the program name, emphasised
+			sty = styHeader.Bold(true)
+		}
+		a.put(ry, x0+2, trunc(line, bw-4), sty)
+	}
+	a.put(hintRow, x0+2, "Press any key to close.", border)
 }
 
 // --- helpers -------------------------------------------------------------

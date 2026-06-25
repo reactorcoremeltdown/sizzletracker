@@ -22,9 +22,13 @@ var upperRow = map[rune]int{
 
 // handleKey dispatches a key event based on the current focus.
 func (a *App) handleKey(ev *tcell.EventKey) bool {
-	// Help overlay: any key dismisses it.
+	// Help / About overlays: any key dismisses them.
 	if a.ed.showHelp {
 		a.ed.showHelp = false
+		return true
+	}
+	if a.ed.showAbout {
+		a.ed.showAbout = false
 		return true
 	}
 
@@ -1112,6 +1116,10 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		a.ed.showHelp = false
 		return
 	}
+	if a.ed.showAbout {
+		a.ed.showAbout = false
+		return
+	}
 	if a.ed.showDialog {
 		return // modal: use Enter / Esc
 	}
@@ -1196,6 +1204,8 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	case ActTabSettings:
 		a.ed.view = ViewSettings
 		a.ed.chanMenuOut = -1
+	case ActAbout:
+		a.ed.showAbout = true
 	case ActSettingsDir:
 		a.openDialog(DlgSaveDir, "Default save folder:", a.ed.saveDir)
 	case ActPatchCell:

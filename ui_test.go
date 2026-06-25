@@ -1,10 +1,74 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
 )
+
+// simScreenText reconstructs the simulation screen as newline-joined rows.
+func simScreenText(sc tcell.SimulationScreen) string {
+	cells, w, h := sc.GetContents()
+	var sb strings.Builder
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if r := cells[y*w+x].Runes; len(r) > 0 {
+				sb.WriteRune(r[0])
+			} else {
+				sb.WriteByte(' ')
+			}
+		}
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+func TestTopBarHasAbout(t *testing.T) {
+	initStyles()
+	sc := tcell.NewSimulationScreen("UTF-8")
+	if err := sc.Init(); err != nil {
+		t.Fatalf("sim init: %v", err)
+	}
+	const w, h = 120, 10
+	sc.SetSize(w, h)
+	a := &App{screen: sc, ed: newEditor()}
+	a.drawTopBar(0, w, &frame{bpm: 120, sig: TimeSig{4, 4}})
+	sc.Show()
+	if !strings.Contains(simScreenText(sc), "About") {
+		t.Errorf("top bar is missing the About button")
+	}
+}
+
+func TestDrawAbout(t *testing.T) {
+	initStyles()
+	sc := tcell.NewSimulationScreen("UTF-8")
+	if err := sc.Init(); err != nil {
+		t.Fatalf("sim init: %v", err)
+	}
+	const w, h = 80, 30
+	sc.SetSize(w, h)
+	a := &App{screen: sc, ed: newEditor()}
+	a.drawAbout(h, w)
+	sc.Show()
+
+	screen := simScreenText(sc)
+	for _, want := range []string{
+		"About",
+		"sizzletracker",
+		"Azer Abdullaev",
+		"Reactorcoremeltdown",
+		"github.com/reactorcoremeltdown/sizzletracker",
+		"https://rcmd.space/s",
+		appVersion,
+		"GPL",
+		"Press any key to close",
+	} {
+		if !strings.Contains(screen, want) {
+			t.Errorf("About popup missing %q", want)
+		}
+	}
+}
 
 // rowAllBg reports whether every cell in row y (0..w-1) has background bg.
 func rowAllBg(cells []tcell.SimCell, w, y int, bg tcell.Color) bool {

@@ -60,6 +60,7 @@ const (
 	ActTabEdit     // switch to the editor view
 	ActTabPatch    // switch to the patchbay view
 	ActTabSettings // switch to the settings view
+	ActAbout       // open the About popup
 	ActThru        // toggle MIDI note thru (forward input notes to outputs)
 	ActSettingsDir // edit the default save folder
 	// Patchbay.
@@ -153,13 +154,14 @@ type Editor struct {
 	settingsScroll int    // scroll offset of the hotkey reference
 
 	// Modal overlays.
-	showHelp bool
-	showSig  bool
-	sigX     int // x of the Sig field (so the dropdown can align under it)
-	showStep bool
-	stepX    int // x of the Step field
-	showFile bool
-	fileX    int // x of the File menu (for dropdown alignment)
+	showHelp  bool
+	showAbout bool
+	showSig   bool
+	sigX      int // x of the Sig field (so the dropdown can align under it)
+	showStep  bool
+	stepX     int // x of the Step field
+	showFile  bool
+	fileX     int // x of the File menu (for dropdown alignment)
 
 	// Modal file dialog.
 	showDialog   bool

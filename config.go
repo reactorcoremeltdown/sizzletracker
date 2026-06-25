@@ -16,6 +16,9 @@ import (
 
 const appName = "sizzletracker"
 
+// appVersion is the released version, shown in the About window.
+const appVersion = "1.0.0"
+
 // Config is the persisted preference set.
 type Config struct {
 	LowerH   int              `json:"lower_h,omitempty"`
