@@ -288,32 +288,30 @@ its patches.
 ## 9. Recording live from a controller
 
 You can punch notes in from a connected MIDI controller. Two independent toggles
-control how incoming notes are treated — the "MIDI latch":
+decide what happens to incoming MIDI:
 
-- **Record** — `●` button, **F5**: while playing, write incoming notes into the
-  tracker **at the playhead**, and let the tracker view follow the playhead.
-- **Thru** — `»` button, **Ctrl+T**: forward incoming notes to the patched
-  outputs (so you can hear the controller).
+- **Rec** — `●` button, **F5**: record the incoming notes into the tracker.
+- **Latch** — `»` button, **Ctrl+T**: play the incoming notes *through* to the
+  patched outputs (monitoring), so you can hear the controller.
 
-**When Record is not armed, incoming MIDI behaves exactly like the computer
-keyboard:** notes are punched in **at the edit cursor** (a chord step-recorder)
-and the view stays on the cursor instead of following the playhead. So you can
-step-enter from a MIDI keyboard without arming record at all.
+Their four combinations, shown on the toolbar and the Settings tab:
 
-Together they form four modes, shown on the toolbar and the Settings tab:
-
-| Record | Thru | Mode | Meaning |
+| Rec | Latch | Mode | What happens |
 |---|---|---|---|
-| off | on | **Playback** (default) | monitor the controller, don't record |
-| on | off | **Record** | record only, no monitoring |
-| on | on | **Both** | record and monitor |
-| off | off | **Off** | ignore notes |
+| on | on | **Both** | play **and** record at the playhead; the view follows the playhead |
+| on | off | **Record** | record at the playhead (view follows); do **not** play through |
+| off | on | **Playback** (default) | play through only; record **nothing**, even though notes are arriving |
+| off | off | **Punch-in** | record at the **edit cursor** (no playhead follow, no play-through) — exactly like computer-keyboard entry |
 
-### How to record
-1. In the patchbay, route your controller's input column to an output (for
-   monitoring) — `Trk` need not be involved for thru.
-2. Press **F5** to arm **Record**.
-3. Press **Space** to play, and perform.
+So with both off you can step-enter from a MIDI keyboard at the cursor without
+arming anything; with **Rec** on you record live along the playhead; and **Latch**
+alone is pure monitoring with no recording.
+
+### How to record live
+1. In the patchbay, route your controller's input to an output (for monitoring),
+   and turn **Latch** on if you want to hear it.
+2. Press **F5** to arm **Rec**.
+3. Press **Space** to play, and perform — notes land at the playhead.
 
 Recording is **polyphonic**: each held note takes its own track, chords overflow
 to free tracks, and new tracks are created as needed. Note-on and note-off are

@@ -62,7 +62,7 @@ func TestLatchMode(t *testing.T) {
 		{false, true, "Playback"},
 		{true, false, "Record"},
 		{true, true, "Both"},
-		{false, false, "Off"},
+		{false, false, "Punch-in"},
 	} {
 		e.armed, e.thru = c.armed, c.thru
 		if got := e.latchMode(); got != c.want {

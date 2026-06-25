@@ -1414,15 +1414,25 @@ func (a *App) freePunchTrack(blk *Block) int {
 }
 
 func (a *App) applyPunch(on bool, note, vel, ch int) {
+	// Rec (armed) + Latch (thru) decide what happens to incoming MIDI:
+	//   Rec on,  Latch on  -> record at playhead (follow) + play through
+	//   Rec on,  Latch off -> record at playhead (follow), no play through
+	//   Rec off, Latch on  -> play through only, do NOT record
+	//   Rec off, Latch off -> punch-in: record at the cursor, no follow/play
+	// Forwarding ("play") is done by the MIDI engine (thru); here we only
+	// decide whether to write the note into the tracker. The single case that
+	// records nothing is play-only (Rec off, Latch on).
+	if !a.ed.armed && a.ed.thru {
+		return
+	}
 	// Record the incoming channel; default to channel 1 (index 0) when the
 	// channel is unknown / out of range.
 	if ch < 0 || ch > 15 {
 		ch = 0
 	}
 	// Follow the playhead only while armed and playing (live recording).
-	// Otherwise incoming notes behave exactly like keyboard entry: they are
-	// written at the edit cursor (a stopped chord step-recorder), and the view
-	// is not pulled to the playhead.
+	// Otherwise incoming notes behave like keyboard entry: written at the edit
+	// cursor (a chord step-recorder), with the view staying on the cursor.
 	atPlayhead := a.ed.armed && a.player.isPlaying()
 
 	a.song.mu.Lock()

@@ -128,6 +128,38 @@ func TestPolyphonicPunch(t *testing.T) {
 	}
 }
 
+// TestPunchLatchGating covers the Rec/Latch truth table for what gets recorded.
+func TestPunchLatchGating(t *testing.T) {
+	mk := func(armed, thru bool) (*App, *Block) {
+		s := newSong()
+		app := &App{song: s, player: newPlayer(s, &MidiEngine{}), ed: newEditor()}
+		app.ed.armed, app.ed.thru = armed, thru
+		app.ed.editBlock, app.ed.curTrack, app.ed.curTick = 0, 0, 0
+		return app, s.Blocks[0]
+	}
+
+	// Rec off, Latch on -> play only: nothing is written.
+	app, blk := mk(false, true)
+	app.applyPunch(true, 60, 100, 0)
+	if blk.Tracks[0].Steps[0].Note != NoteEmpty {
+		t.Errorf("play-only (Rec off, Latch on) must not record, got %d", blk.Tracks[0].Steps[0].Note)
+	}
+
+	// Rec off, Latch off -> punch-in: record at the cursor.
+	app, blk = mk(false, false)
+	app.applyPunch(true, 60, 100, 0)
+	if blk.Tracks[0].Steps[0].Note != 60 {
+		t.Errorf("punch-in (both off) should record at cursor, got %d", blk.Tracks[0].Steps[0].Note)
+	}
+
+	// Rec on, Latch off -> record (stopped => at cursor here).
+	app, blk = mk(true, false)
+	app.applyPunch(true, 62, 100, 0)
+	if blk.Tracks[0].Steps[0].Note != 62 {
+		t.Errorf("Rec on should record, got %d", blk.Tracks[0].Steps[0].Note)
+	}
+}
+
 // TestTrackerSelectionOps checks copy/cut/clear/paste over a rectangular
 // tracker selection (tracks x ticks), with the cursor as paste top-left.
 func TestTrackerSelectionOps(t *testing.T) {

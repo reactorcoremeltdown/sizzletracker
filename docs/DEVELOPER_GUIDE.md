@@ -297,17 +297,24 @@ applies it only at a bar boundary. The UI shows the *target* mode immediately
 jumping.
 
 ### Live punch-in
-`applyPunch` (in [`input.go`](../input.go), called from the UI loop) writes
-incoming notes into the tracker. It is polyphonic: each held input note is
-tracked (`Editor.punch`) and assigned a track, overflowing to new tracks for
-chords. Where the note lands depends on `atPlayhead = armed && playing`:
+`applyPunch` (in [`input.go`](../input.go), called from the UI loop) decides what
+to do with incoming MIDI from the two toggles `armed` (Rec) and `thru` (Latch).
+Forwarding to outputs ("play") is handled separately by the MIDI engine (thru);
+`applyPunch` only decides whether/where to *record*:
 
-- **armed + playing** → notes record at the playhead (live recording), and the
-  tracker view follows the playhead (`computeTickScroll` gates follow on
-  `armed`).
-- **otherwise** (not armed, or stopped) → notes land at the **edit cursor**,
-  exactly like computer-keyboard entry: a chord step-recorder that advances once
-  the whole chord is released, with the view staying on the cursor.
+| Rec (`armed`) | Latch (`thru`) | Behaviour |
+|---|---|---|
+| on | on | record at the playhead; view follows |
+| on | off | record at the playhead; view follows |
+| off | on | **record nothing** (play-only; early return) |
+| off | off | record at the **edit cursor** (punch-in, no follow) |
+
+So the write position uses `atPlayhead = armed && playing`, and the one case that
+records nothing is `!armed && thru`. The tracker view follows the playhead only
+while `armed` (`computeTickScroll` gates follow on it). Recording is polyphonic:
+each held input note is tracked (`Editor.punch`) and assigned a track,
+overflowing to new tracks for chords. `latchMode()` ([`editor.go`](../editor.go))
+names the four states Both / Record / Playback / Punch-in.
 
 ---
 

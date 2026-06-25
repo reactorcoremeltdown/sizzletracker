@@ -523,15 +523,19 @@ func (a *App) drawSettings(top, height, w int) {
 
 	// MIDI input latch section.
 	y = a.sectionBanner(y, w, " MIDI input latch ", stySecMidi)
-	a.put(y, 4, "Record notes (F5)", styNormal)
+	a.put(y, 4, "Rec - record (F5)", styNormal)
 	a.put(y, 26, onOffLabel(a.ed.armed), onOffStyle(a.ed.armed))
 	a.ed.addRegion(Region{x: 26, y: y, w: 5, h: 1, action: ActRecord})
 	y++
-	a.put(y, 4, "Thru notes (Ctrl+T)", styNormal)
+	a.put(y, 4, "Latch - play (Ctrl+T)", styNormal)
 	a.put(y, 26, onOffLabel(a.ed.thru), onOffStyle(a.ed.thru))
 	a.ed.addRegion(Region{x: 26, y: y, w: 5, h: 1, action: ActThru})
 	y++
-	a.put(y, 4, "Mode: "+a.ed.latchMode()+"   (Playback=thru only, Record=record only, Both)", styDim)
+	a.put(y, 4, "Mode: "+a.ed.latchMode(), styDim)
+	y++
+	a.put(y, 4, "Both=play+record(playhead)  Rec=record only  Latch=play only", styDim)
+	y++
+	a.put(y, 4, "neither=punch-in (record at cursor, no follow/play)", styDim)
 	y += 2
 
 	// Hotkey reference: a bright, text-field-style panel that fills the
@@ -1121,7 +1125,7 @@ var helpLines = []string{
 	"  F4 cycle views   F5 record   Ctrl+T thru   F6 loop   F7 follow",
 	"  F8 panic   F9 BPM   F10 quit",
 	"  Ctrl+R rename block (max 16; or double-click a block name)",
-	"  MIDI latch = Record (F5) + Thru (Ctrl+T): Playback/Record/Both/Off",
+	"  Rec (F5) + Latch/Thru (Ctrl+T): Both, Record, Playback, Punch-in",
 	"",
 	"# Files (File menu, or keys)",
 	"  Ctrl+S save   Ctrl+O open   Ctrl+E export MIDI",

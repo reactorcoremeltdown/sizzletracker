@@ -141,19 +141,19 @@ func TestDrawSettingsSections(t *testing.T) {
 	_, keysBg, _ := stySecKeys.Decompose()
 	_, panelBg, _ := styKeyPanel.Decompose()
 
-	// Layout: SETTINGS at y=1; Project banner y=3; MIDI banner y=6;
-	// Hotkeys banner y=11; panel rows from y=12 down.
+	// Layout: SETTINGS at y=1; Project banner y=3; MIDI banner y=6 (Rec, Latch,
+	// Mode + two description lines); Hotkeys banner y=13; panel rows from y=14.
 	if !rowAllBg(cells, w, 3, projBg) {
 		t.Errorf("row 3 is not a full-width Project banner")
 	}
 	if !rowAllBg(cells, w, 6, midiBg) {
 		t.Errorf("row 6 is not a full-width MIDI banner")
 	}
-	if !rowAllBg(cells, w, 11, keysBg) {
-		t.Errorf("row 11 is not a full-width Hotkeys banner")
+	if !rowAllBg(cells, w, 13, keysBg) {
+		t.Errorf("row 13 is not a full-width Hotkeys banner")
 	}
-	if !rowAllBg(cells, w, 13, panelBg) {
-		t.Errorf("row 13 is not part of the hotkey panel background")
+	if !rowAllBg(cells, w, 14, panelBg) {
+		t.Errorf("row 14 is not part of the hotkey panel background")
 	}
 
 	// The three section colors and the panel must be visually distinct.

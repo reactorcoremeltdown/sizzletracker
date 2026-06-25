@@ -141,9 +141,9 @@ type Editor struct {
 	// Marker clipboard (rectangle of beat-markers).
 	markClip [][]bool
 
-	// MIDI note latch: armed records incoming notes into the tracker; thru
-	// forwards incoming notes to the patched outputs. Together they form the
-	// latch mode (Playback / Record / Both / Off).
+	// MIDI input latch: armed (Rec) records incoming notes into the tracker;
+	// thru (Latch) plays them through to the patched outputs. Together they form
+	// the mode (Both / Record / Playback / Punch-in); see latchMode.
 	armed bool
 	thru  bool
 	punch map[int]punchInfo
@@ -211,7 +211,12 @@ func newEditor() *Editor {
 	}
 }
 
-// latchMode names the current MIDI note latch from (armed, thru).
+// latchMode names the current MIDI input behaviour from (armed=Rec, thru=Latch):
+//
+//	Rec on,  Latch on  -> "Both"     (record at playhead + play through)
+//	Rec on,  Latch off -> "Record"   (record at playhead, no play)
+//	Rec off, Latch on  -> "Playback" (play through only, no record)
+//	Rec off, Latch off -> "Punch-in" (record at the cursor, no play/follow)
 func (e *Editor) latchMode() string {
 	switch {
 	case e.armed && e.thru:
@@ -221,7 +226,7 @@ func (e *Editor) latchMode() string {
 	case e.thru:
 		return "Playback"
 	default:
-		return "Off"
+		return "Punch-in"
 	}
 }
 
