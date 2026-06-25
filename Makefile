@@ -4,8 +4,8 @@
 # Linux (amd64 + arm64): the cgo include/lib directives in
 # internal/portmidi/portmidi.go already list every standard prefix.
 #
-# If your portmidi/ncurses live somewhere non-standard, export CGO_CFLAGS /
-# CGO_LDFLAGS to point at them and they will be merged in.
+# If your portmidi lives somewhere non-standard, export CGO_CFLAGS /
+# CGO_LDFLAGS to point at it and they will be merged in.
 
 BIN := sizzletracker
 

@@ -1,7 +1,8 @@
 # sizzletracker
 
 A terminal (TUI) MIDI tracker / step sequencer written in Go on top of
-ncurses, with live pattern editing for MIDI "looping".
+[tcell](https://github.com/gdamore/tcell), with live pattern editing for MIDI
+"looping".
 
 ```
 ┌ top bar ─────────────────────────────────────────────────────────────────┐
@@ -280,3 +281,23 @@ input processing bounded per frame. The net effect is that no amount of user
 input can stall MIDI playback or screen updates. The editor state is owned
 solely by the UI goroutine; MIDI input arrives on a separate goroutine and is
 forwarded to the UI loop over a channel. Verified clean under `go build -race`.
+
+## Documentation
+
+Full documentation lives in [`docs/`](docs/):
+
+- [User guide](docs/USER_GUIDE.md) — install, a first-song tutorial, every
+  editing surface, MIDI setup, recording, and a keyboard cheat-sheet.
+- [Developer guide](docs/DEVELOPER_GUIDE.md) — architecture, data model,
+  concurrency, file formats, and how to extend the code.
+- [Licensing analysis](docs/LICENSING.md) and
+  [third-party notices](docs/THIRD_PARTY_NOTICES.md).
+
+## License
+
+sizzletracker is released under the **GNU General Public License v3.0** — see
+[`LICENSE`](LICENSE). It bundles and links permissively-licensed components
+(MIT / BSD / Apache-2.0), all compatible with the GPLv3; see
+[docs/LICENSING.md](docs/LICENSING.md) and
+[docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md) for the full analysis
+and attributions.
