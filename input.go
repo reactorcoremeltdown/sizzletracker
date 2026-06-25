@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -294,6 +296,35 @@ func (a *App) handleDialogKey(k tcell.Key, r rune) {
 			a.ed.dlgBuf += string(r)
 		}
 	}
+}
+
+// openAboutURL opens the About-popup link at index i in the system browser.
+func (a *App) openAboutURL(i int) {
+	if i < 0 || i >= len(aboutURLs) {
+		return
+	}
+	url := aboutURLs[i]
+	if err := openURL(url); err != nil {
+		a.ed.status = "Could not open " + url
+		return
+	}
+	a.ed.status = "Opening " + url
+}
+
+// openURL launches the OS default handler for url (browser). It returns
+// immediately; the child runs detached.
+func openURL(url string) error {
+	var name string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		name, args = "open", []string{url}
+	case "windows":
+		name, args = "rundll32", []string{"url.dll,FileProtocolHandler", url}
+	default: // linux, *bsd
+		name, args = "xdg-open", []string{url}
+	}
+	return exec.Command(name, args...).Start()
 }
 
 // startRenameBlock opens the rename dialog for block i, prefilled with its
@@ -1117,6 +1148,12 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		return
 	}
 	if a.ed.showAbout {
+		// A click on a link opens it (and keeps the popup open); any other
+		// click closes the popup.
+		if reg, ok := a.ed.hitTest(x, y); ok && reg.action == ActAboutLink {
+			a.openAboutURL(reg.data1)
+			return
+		}
 		a.ed.showAbout = false
 		return
 	}

@@ -62,10 +62,24 @@ func TestDrawAbout(t *testing.T) {
 		"https://rcmd.space/s",
 		appVersion,
 		"GPL",
-		"Press any key to close",
+		"Click a link to open it",
 	} {
 		if !strings.Contains(screen, want) {
 			t.Errorf("About popup missing %q", want)
+		}
+	}
+
+	// Both URLs are registered as clickable link regions pointing at the right
+	// entries in aboutURLs.
+	links := map[string]bool{}
+	for _, r := range a.ed.regions {
+		if r.action == ActAboutLink && r.data1 >= 0 && r.data1 < len(aboutURLs) {
+			links[aboutURLs[r.data1]] = true
+		}
+	}
+	for _, u := range []string{aboutGitHub, aboutSupport} {
+		if !links[u] {
+			t.Errorf("no clickable region for %q", u)
 		}
 	}
 }

@@ -61,6 +61,7 @@ const (
 	ActTabPatch    // switch to the patchbay view
 	ActTabSettings // switch to the settings view
 	ActAbout       // open the About popup
+	ActAboutLink   // data1=index into aboutURLs (open it in the browser)
 	ActThru        // toggle MIDI note thru (forward input notes to outputs)
 	ActSettingsDir // edit the default save folder
 	// Patchbay.

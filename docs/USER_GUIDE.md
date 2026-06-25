@@ -92,7 +92,9 @@ To leave the program at any time, press **F10**.
 - **Tabs**: `Edit` is the tracker + piano roll; `Patchbay` is MIDI routing;
   `Settings` is preferences and the hotkey reference. Cycle them with **F4**.
 - **About**: the `About` button (after `Settings`) opens a popup with the
-  version, author, links and license; press any key or click to close it.
+  version, author, license, and the GitHub / support links. **Click a link to
+  open it** in your browser (the links are also OSC 8 hyperlinks in terminals
+  that support them); any key, or a click elsewhere, closes the popup.
 - The bar between the tracker and the roll can be **dragged** to resize the two
   panes.
 

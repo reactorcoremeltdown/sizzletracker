@@ -1215,28 +1215,53 @@ func (a *App) drawHelp(h, w int) {
 	a.put(hintRow, x0+2, "Press any key to close this help.", styHeader.Bold(true))
 }
 
-// aboutLines is the content of the About popup. ASCII-only, like the help
-// overlay, so it renders identically on every terminal and font.
-var aboutLines = []string{
-	"sizzletracker",
-	"A terminal MIDI tracker / step sequencer.",
-	"",
-	"Version:  " + appVersion,
-	"Author:   Azer Abdullaev (Reactorcoremeltdown)",
-	"",
-	"GitHub:   https://github.com/reactorcoremeltdown/sizzletracker",
-	"Support:  https://rcmd.space/s",
-	"",
-	"Copyright (C) 2026 Azer Abdullaev",
-	"License:  GNU GPL v3.0 or later (see LICENSE)",
+// The two URLs shown (and made clickable) in the About popup. aboutURLs is
+// indexed by an ActAboutLink region's data1.
+const (
+	aboutGitHub  = "https://github.com/reactorcoremeltdown/sizzletracker"
+	aboutSupport = "https://rcmd.space/s"
+)
+
+var aboutURLs = []string{aboutGitHub, aboutSupport}
+
+// aboutLine is one row of the About popup. When url != "" the label is followed
+// by that URL, rendered as a clickable hyperlink.
+type aboutLine struct {
+	label string
+	url   string
+}
+
+// aboutContent is the popup body. ASCII labels (like the help overlay) so it
+// renders identically on every terminal and font.
+var aboutContent = []aboutLine{
+	{label: "sizzletracker"},
+	{label: "A terminal MIDI tracker / step sequencer."},
+	{},
+	{label: "Version:  " + appVersion},
+	{label: "Author:   Azer Abdullaev (Reactorcoremeltdown)"},
+	{},
+	{label: "GitHub:   ", url: aboutGitHub},
+	{label: "Support:  ", url: aboutSupport},
+	{},
+	{label: "Copyright (C) 2026 Azer Abdullaev"},
+	{label: "License:  GNU GPL v3.0 or later (see LICENSE)"},
+}
+
+func aboutURLIndex(url string) int {
+	for i, u := range aboutURLs {
+		if u == url {
+			return i
+		}
+	}
+	return -1
 }
 
 func (a *App) drawAbout(h, w int) {
-	bw := 66
+	bw := 70
 	if bw > w-2 {
 		bw = w - 2
 	}
-	bh := len(aboutLines) + 4 // top/bottom border, title, close hint
+	bh := len(aboutContent) + 4 // top/bottom border, title, close hint
 	if bh > h-2 {
 		bh = h - 2
 	}
@@ -1259,18 +1284,28 @@ func (a *App) drawAbout(h, w int) {
 	a.put(y0, x0+(bw-cellWidth(title))/2, title, border)
 
 	hintRow := y0 + bh - 2
-	for i, line := range aboutLines {
+	for i, line := range aboutContent {
 		ry := y0 + 1 + i
 		if ry >= hintRow {
 			break
 		}
+		lx := x0 + 2
 		sty := styHeader
 		if i == 0 { // the program name, emphasised
 			sty = styHeader.Bold(true)
 		}
-		a.put(ry, x0+2, trunc(line, bw-4), sty)
+		a.put(ry, lx, trunc(line.label, bw-4), sty)
+		if line.url != "" {
+			ux := lx + cellWidth(line.label)
+			// OSC 8 hyperlink (clickable in terminals that support it) plus an
+			// in-app region so a click opens it everywhere.
+			linkSty := styHeader.Underline(true).Url(line.url)
+			a.put(ry, ux, trunc(line.url, x0+bw-2-ux), linkSty)
+			a.ed.addRegion(Region{x: ux, y: ry, w: cellWidth(line.url), h: 1,
+				action: ActAboutLink, data1: aboutURLIndex(line.url)})
+		}
 	}
-	a.put(hintRow, x0+2, "Press any key to close.", border)
+	a.put(hintRow, x0+2, "Click a link to open it; any key closes this.", border)
 }
 
 // --- helpers -------------------------------------------------------------
