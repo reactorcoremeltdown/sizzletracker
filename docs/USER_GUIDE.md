@@ -177,9 +177,10 @@ coarser grid.
 ### Selecting, cutting, copying, pasting
 - **Shift+arrows** or **drag** select a rectangle of cells (across tracks and
   ticks). The cursor corner is the top-left of a paste.
-- **Ctrl+C / Ctrl+X / Ctrl+V** copy / cut / paste; **Delete** clears the
-  selection. Note, velocity and channel are pasted into their respective
-  columns.
+- **Ctrl+C / Ctrl+X / Ctrl+V** copy / cut / paste. Note, velocity and channel
+  are pasted into their respective columns.
+- **Delete** or **Backspace** clears the whole selection at once (when nothing
+  is selected they clear the single cursor cell).
 
 ### Block controls (the line above the grid)
 - **`<` / `>`** (or **`[` / `]`**) switch to the previous / next block.
@@ -260,10 +261,15 @@ Open it with **F4** (the `Patchbay` tab). It is a routing matrix:
 ### Using it
 - Move the cursor with the **arrow keys**; **Enter**, **`*`**, or a **click**
   toggles a connection.
-- Each output row has a **channel filter** button `[all]`. Click it (or press
-  **`c`**) to open a dropdown where you choose **All / None / individual
-  channels** that may pass to that output. The dropdown stays open while you
-  toggle channels; click outside or press **Esc** to close it.
+- Each output row has a configuration button `[all]`. Click it (or press
+  **`c`**) to open a popup with two things:
+  - a **channel filter** — **All / None / individual channels** that may pass to
+    that output;
+  - a **MIDI clock** toggle (**Clock ON / OFF**) that enables or disables sending
+    MIDI clock / Start / Stop to *that specific output*.
+
+  The popup stays open while you toggle items; click outside or press **Esc** to
+  close it.
 
 ### Hot-plugging devices
 While the patchbay is open, sizzletracker **rescans automatically** so newly
@@ -273,20 +279,26 @@ filters are preserved **by device name**, so reconnecting a controller restores
 its patches.
 
 > Routing `Trk` to an output is what makes the sequencer audible, and also what
-> sends MIDI clock / Start / Stop to that output.
+> sends MIDI clock / Start / Stop to that output — unless you turn clock off for
+> that output in its popup (handy when a device should receive notes but not be
+> driven by the tracker's transport).
 
 ---
 
 ## 9. Recording live from a controller
 
-You can punch notes in from a connected MIDI controller while the transport
-plays. Two independent toggles control how incoming notes are treated — the
-"MIDI latch":
+You can punch notes in from a connected MIDI controller. Two independent toggles
+control how incoming notes are treated — the "MIDI latch":
 
-- **Record** — `●` button, **F5**: write incoming notes into the tracker at the
-  playhead.
+- **Record** — `●` button, **F5**: while playing, write incoming notes into the
+  tracker **at the playhead**, and let the tracker view follow the playhead.
 - **Thru** — `»` button, **Ctrl+T**: forward incoming notes to the patched
   outputs (so you can hear the controller).
+
+**When Record is not armed, incoming MIDI behaves exactly like the computer
+keyboard:** notes are punched in **at the edit cursor** (a chord step-recorder)
+and the view stays on the cursor instead of following the playhead. So you can
+step-enter from a MIDI keyboard without arming record at all.
 
 Together they form four modes, shown on the toolbar and the Settings tab:
 
@@ -433,11 +445,12 @@ Enlarge the window; the UI needs roughly 40×8 minimum and is comfortable at
 | `z`..`m`, `q`..`i` | Enter notes (two octaves) |
 | `-` / `=` | Lower / raise octave |
 | `` ` `` | Note-off |
-| `.` / Backspace | Clear cell / clear and step back |
+| `.` | Clear cell |
+| Backspace | Clear selection, or clear cell and step back |
 | `[` `]` or `<` `>` | Previous / next block |
 | Shift+arrows or drag | Select a region |
 | Ctrl+C / X / V | Copy / cut / paste (cursor = top-left) |
-| Delete | Clear selection |
+| Delete / Backspace | Clear selection (or the cursor cell) |
 
 ### Piano roll
 | Key | Action |
@@ -458,6 +471,6 @@ Enlarge the window; the UI needs roughly 40×8 minimum and is comfortable at
 |---|---|
 | Arrows | Move cursor |
 | Enter / `*` / click | Toggle a connection |
-| `c` | Open the channel-filter dropdown |
+| `c` | Open the per-output popup (channel filter + MIDI clock toggle) |
 | `r` | Rescan MIDI devices |
 | Esc | Close a dropdown |

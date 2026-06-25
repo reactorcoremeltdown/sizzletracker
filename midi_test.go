@@ -94,14 +94,44 @@ func TestPatchRouting(t *testing.T) {
 
 	// Persist and restore.
 	m.toggleRoute(1, 1) // K -> B
-	routes, filters := m.exportPatch()
+	m.toggleClock(0)    // disable clock on A
+	routes, filters, clockOff := m.exportPatch()
 	m2 := fakeEngine([]string{"A", "B"}, []string{"K"})
-	m2.applyPatch(routes, filters)
+	m2.applyPatch(routes, filters, clockOff)
 	if !m2.route(0, 0) || !m2.route(1, 1) || m2.route(0, 1) {
 		t.Errorf("applyPatch did not restore routes")
 	}
 	if m2.filterOn(0, 5) {
 		t.Errorf("applyPatch did not restore filter (ch5 on A should stay off)")
+	}
+	if m2.clockOn(0) || !m2.clockOn(1) {
+		t.Errorf("applyPatch did not restore clock state (A off, B on)")
+	}
+}
+
+func TestClockRouting(t *testing.T) {
+	m := fakeEngine([]string{"A", "B"}, []string{"K"})
+	m.toggleRoute(0, 0) // Tracker -> A
+	m.toggleRoute(0, 1) // Tracker -> B
+
+	// Clock defaults on: both routed outputs receive it.
+	got := m.clockOuts()
+	if len(got) != 2 {
+		t.Fatalf("clockOuts default = %v, want both outputs", got)
+	}
+
+	// Disabling clock on A drops it from the realtime fan-out but keeps the
+	// note routing intact.
+	m.toggleClock(0)
+	if m.clockOn(0) {
+		t.Errorf("clock on A should be off")
+	}
+	got = m.clockOuts()
+	if len(got) != 1 || got[0] != 1 {
+		t.Errorf("clockOuts after disabling A = %v, want [1]", got)
+	}
+	if outs := m.trackerOuts(0); len(outs) != 2 {
+		t.Errorf("note routing must be unaffected by the clock toggle: %v", outs)
 	}
 }
 
@@ -141,11 +171,11 @@ func TestPatchSurvivesDeviceReorder(t *testing.T) {
 	m.setFilterAll(2, false)
 	m.toggleFilter(2, 0) // C: only channels 0 and 1
 	m.toggleFilter(2, 1)
-	routes, filters := m.exportPatch()
+	routes, filters, clockOff := m.exportPatch()
 
 	// Same devices, different order (as after a rescan re-enumeration).
 	m2 := fakeEngine([]string{"C", "A", "B"}, []string{"K"}) // B=2, C=0
-	m2.applyPatch(routes, filters)
+	m2.applyPatch(routes, filters, clockOff)
 
 	if !m2.route(0, 2) {
 		t.Errorf("Tracker->B not restored at B's new index")

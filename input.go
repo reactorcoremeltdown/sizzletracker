@@ -519,8 +519,12 @@ func (a *App) handleTrackerKey(k tcell.Key, r rune, mod tcell.ModMask) {
 		a.trkPaste()
 		return
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		a.setCell(func(st *Step) { *st = emptyStep() })
-		a.ed.curTick = wrap(a.ed.curTick-1, blk.Length)
+		if a.ed.tSelActive {
+			a.trkClearSel() // clear a multi-cell selection (mouse drag / shift+arrows)
+		} else {
+			a.setCell(func(st *Step) { *st = emptyStep() })
+			a.ed.curTick = wrap(a.ed.curTick-1, blk.Length)
+		}
 		return
 	case tcell.KeyDelete:
 		if a.ed.tSelActive {
@@ -1125,7 +1129,7 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	// Channel dropdown is semi-modal: a click off its controls just closes it.
 	if a.ed.chanMenuOut >= 0 {
 		switch reg.action {
-		case ActChanCell, ActChanAll, ActChanNone, ActChanMenu:
+		case ActChanCell, ActChanAll, ActChanNone, ActChanMenu, ActClockToggle:
 			// handled below; keep the dropdown open
 		default:
 			a.ed.chanMenuOut = -1
@@ -1210,6 +1214,8 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 		a.midi.setFilterAll(reg.data1, true)
 	case ActChanNone:
 		a.midi.setFilterAll(reg.data1, false)
+	case ActClockToggle:
+		a.midi.toggleClock(reg.data1) // keeps the dropdown open
 	case ActAddTrack:
 		a.song.mu.Lock()
 		a.song.Blocks[a.ed.editBlock].addTrack()
@@ -1408,20 +1414,21 @@ func (a *App) freePunchTrack(blk *Block) int {
 }
 
 func (a *App) applyPunch(on bool, note, vel, ch int) {
-	if !a.ed.armed {
-		return
-	}
 	// Record the incoming channel; default to channel 1 (index 0) when the
 	// channel is unknown / out of range.
 	if ch < 0 || ch > 15 {
 		ch = 0
 	}
-	playing := a.player.isPlaying()
+	// Follow the playhead only while armed and playing (live recording).
+	// Otherwise incoming notes behave exactly like keyboard entry: they are
+	// written at the edit cursor (a stopped chord step-recorder), and the view
+	// is not pulled to the playhead.
+	atPlayhead := a.ed.armed && a.player.isPlaying()
 
 	a.song.mu.Lock()
 	blk := a.song.Blocks[a.ed.editBlock]
 	tick := a.ed.curTick
-	if playing {
+	if atPlayhead {
 		pb, pt, _ := a.player.playhead()
 		if pb == a.ed.editBlock {
 			tick = pt
@@ -1448,7 +1455,7 @@ func (a *App) applyPunch(on bool, note, vel, ch int) {
 	if known {
 		delete(a.ed.punch, note)
 	}
-	if playing && known && info.track >= 0 && info.track < len(blk.Tracks) {
+	if atPlayhead && known && info.track >= 0 && info.track < len(blk.Tracks) {
 		offTick := tick
 		if offTick == info.tick {
 			offTick = info.tick + 1 // released within the same tick; keep the note
@@ -1460,8 +1467,9 @@ func (a *App) applyPunch(on bool, note, vel, ch int) {
 	chordDone := len(a.ed.punch) == 0
 	a.song.mu.Unlock()
 
-	// Stopped step-recorder: advance only once the whole chord is released.
-	if !playing && known && chordDone {
+	// Cursor step-recorder (not following the playhead): advance only once the
+	// whole chord has been released.
+	if !atPlayhead && known && chordDone {
 		a.advance()
 	}
 }

@@ -298,9 +298,16 @@ jumping.
 
 ### Live punch-in
 `applyPunch` (in [`input.go`](../input.go), called from the UI loop) writes
-incoming notes into the tracker at the playhead when record-arm is on. It is
-polyphonic: each held input note is tracked (`Editor.punch`) and assigned a
-track, overflowing to new tracks for chords.
+incoming notes into the tracker. It is polyphonic: each held input note is
+tracked (`Editor.punch`) and assigned a track, overflowing to new tracks for
+chords. Where the note lands depends on `atPlayhead = armed && playing`:
+
+- **armed + playing** → notes record at the playhead (live recording), and the
+  tracker view follows the playhead (`computeTickScroll` gates follow on
+  `armed`).
+- **otherwise** (not armed, or stopped) → notes land at the **edit cursor**,
+  exactly like computer-keyboard entry: a chord step-recorder that advances once
+  the whole chord is released, with the view staying on the cursor.
 
 ---
 
@@ -314,7 +321,8 @@ All in [`midi.go`](../midi.go).
   **`Tracker`** source (the sequencer's notes + clock); index `i>=1` maps to
   `ins[i-1]`.
 - `routes[in][out]` is the connection matrix; `filter[out][ch]` is a per-output
-  16-channel pass filter (default all-on).
+  16-channel pass filter (default all-on); `clock[out]` is a per-output flag for
+  whether MIDI clock / Start / Stop is sent there (default on).
 
 ### Forwarding and sending
 - Each input device has a **listener goroutine** (`listen`) that reads events,
@@ -322,23 +330,26 @@ All in [`midi.go`](../midi.go).
   outputs via `forwardFrom` (channel-filtered).
 - `noThru` (set by `setNoteThru`) gates **note** forwarding for the latch modes;
   CC/PC and the Tracker source are unaffected.
-- The Tracker source sends via `noteOn`/`noteOff`/`trackerRealtime`
-  (clock/start/stop). All output writes go through **`sendTo`**, serialized by
-  `sendMu`.
+- The Tracker source sends notes via `noteOn`/`noteOff` (to `trackerOuts`,
+  channel-filtered) and clock/start/stop via `trackerRealtime` (to `clockOuts`,
+  the routed outputs whose `clock[out]` is on). All output writes go through
+  **`sendTo`**, serialized by `sendMu`.
 
 ### Live rescan (hot-plug)
 PortMidi only sees devices present at `Initialize`. To pick up
 connected/disconnected gear, `rescan()` tears down (stop listeners → close
 streams) and re-enumerates (`Terminate` + `Initialize` + `openDevices`),
-**preserving routing and filters by device name** (`exportPatch`/`applyPatch`).
+**preserving routing, filters and clock state by device name**
+(`exportPatch`/`applyPatch`).
 See [§5](#5-concurrency-model) for the lock ordering it relies on. The UI calls
 it from a goroutine via `App.tryRescan` (automatic while the patchbay is open and
 the transport is stopped; manual with the Rescan button / `r`).
 
 ### Persistence
-`exportPatch` returns routes as `"input>>output"` name pairs plus non-default
-filters; `applyPatch` restores them by name. This is what survives a rescan and
-what is written to `config.json`.
+`exportPatch` returns routes as `"input>>output"` name pairs, the non-default
+channel filters, and the names of outputs with clock disabled; `applyPatch`
+restores all three by name. This is what survives a rescan and what is written
+to `config.json`.
 
 ---
 
@@ -370,8 +381,8 @@ it; the CLI `-export` flag uses it headlessly.
 
 ### Preferences and recovery — in [`config.go`](../config.go)
 - `config.json` in `os.UserConfigDir()/sizzletracker` holds the `Config` struct
-  (pane split, last path, default save folder, latch `NoThru`, patchbay routes
-  and filters).
+  (pane split, last path, default save folder, latch `NoThru`, patchbay routes,
+  channel filters, and the `ClockOff` set of outputs with clock disabled).
 - `recovery.sng` in the same directory is an autosave of the working song,
   written every 10 s and on exit. On startup, if no project was given, it is
   restored so a crash loses little.

@@ -430,13 +430,14 @@ func (a *App) drawPatchbay(top, height, w int) {
 	}
 }
 
-// drawChanMenu renders the per-output channel-filter dropdown. It stays open
-// while toggling channels; only an outside click or Esc closes it.
+// drawChanMenu renders the per-output dropdown that configures channel
+// passthrough and MIDI clock. It stays open while toggling; only an outside
+// click or Esc closes it.
 func (a *App) drawChanMenu(o, w, h int) {
 	const cols, rows = 4, 4
 	cellW := 4
 	bw := cols*cellW + 2
-	bh := 4 + rows // border + title + all/none + grid
+	bh := 5 + rows // border + title + all/none + grid + clock + border
 	x0 := patchFiltX
 	if x0+bw > w {
 		x0 = w - bw - 1
@@ -455,7 +456,7 @@ func (a *App) drawChanMenu(o, w, h int) {
 	border := styHeader.Bold(true)
 	a.put(y0, x0, "+"+strings.Repeat("-", bw-2)+"+", border)
 	a.put(y0+bh-1, x0, "+"+strings.Repeat("-", bw-2)+"+", border)
-	a.put(y0, x0+2, " chan "+trunc(a.midi.outputName(o), bw-9)+" ", border)
+	a.put(y0, x0+2, " "+trunc(a.midi.outputName(o), bw-4)+" ", border)
 
 	// All / None.
 	allX := x0 + 1
@@ -480,6 +481,17 @@ func (a *App) drawChanMenu(o, w, h int) {
 		a.put(cy, cx, fmt.Sprintf("%2d%s", ch+1, mark), sty)
 		a.ed.addRegion(Region{x: cx, y: cy, w: cellW, h: 1, action: ActChanCell, data1: o, data2: ch})
 	}
+
+	// MIDI clock toggle for this output (on its own row below the grid).
+	clkY := y0 + 2 + rows
+	clkLbl := " Clock OFF "
+	clkSty := styBtn
+	if a.midi.clockOn(o) {
+		clkLbl = " Clock ON  "
+		clkSty = styBtnOn
+	}
+	a.put(clkY, x0+1, clkLbl, clkSty)
+	a.ed.addRegion(Region{x: x0 + 1, y: clkY, w: cellWidth(clkLbl), h: 1, action: ActClockToggle, data1: o})
 }
 
 // --- Settings ------------------------------------------------------------
@@ -764,7 +776,10 @@ func (a *App) computeTickScroll(length, stepsH int, fr *frame) {
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
-	if fr.playing && a.ed.follow && fr.playBlk == a.ed.editBlock {
+	// Follow the playhead only while recording (armed). When not armed, the
+	// view stays on the edit cursor so MIDI/keyboard notes can be punched in
+	// there without the scroll chasing the playhead.
+	if fr.playing && a.ed.follow && a.ed.armed && fr.playBlk == a.ed.editBlock {
 		a.ed.tickScroll = fr.playTick - stepsH/2
 	} else {
 		margin := 2
@@ -783,7 +798,10 @@ func (a *App) computeTickScroll(length, stepsH int, fr *frame) {
 
 func (a *App) drawTrackerControls(y, w int, fr *frame) {
 	x := 0
-	title := fmt.Sprintf("BLK %s [%d/%d]", fr.edit.name, a.ed.editBlock+1, fr.numBlocks)
+	// The name is padded to a fixed width (and counts to two digits) so the
+	// title length never changes — the navigation buttons after it stay put as
+	// you switch blocks instead of jumping under the mouse pointer.
+	title := fmt.Sprintf("BLK %-*s [%2d/%2d]", maxBlockNameLen, trunc(fr.edit.name, maxBlockNameLen), a.ed.editBlock+1, fr.numBlocks)
 	a.put(y, x, title, styAccent)
 	a.ed.addRegion(Region{x: x, y: y, w: cellWidth(title), h: 1, action: ActBlockTitle})
 	x += cellWidth(title) + 1
@@ -1112,7 +1130,8 @@ var helpLines = []string{
 	"# Tracker (upper half)",
 	"  Arrows move (L/R cross columns/tracks)   PgUp/PgDn beat",
 	"  Shift+arrows or drag select a region (tracks x rows)",
-	"  Ctrl+C copy  Ctrl+X cut  Ctrl+V paste (cursor=top-left)  Del clear",
+	"  Ctrl+C copy  Ctrl+X cut  Ctrl+V paste (cursor=top-left)",
+	"  Del / Bksp clear (a selection, or the cell)",
 	"  [ / ] or < / > switch block   Home/End top/bottom",
 	"  len: - halves, + doubles, click number to type a length",
 	"  z..m / q..i notes   ` note-off   . clear   Bksp clear+back",
@@ -1130,14 +1149,15 @@ var helpLines = []string{
 	"# Patchbay (F4)",
 	"  Rows = outputs, columns = inputs (Trk = tracker notes+clock).",
 	"  Arrows move; Enter / * / click toggles a connection.",
-	"  [..] per output opens a channel filter: All / None / toggle",
-	"  channels (stays open; click outside or Esc closes). c opens it.",
+	"  [..] per output opens a popup: channel filter (All/None/toggle)",
+	"  plus a per-output MIDI clock on/off toggle. Stays open; c opens it.",
 	"  Devices auto-rescan while the patchbay is open; r / Rescan forces it.",
 	"",
 	"# Live punch-in (polyphonic)",
-	"  Arm record (F5); play a connected controller. Note-on/off record",
-	"  at the playhead. Each held note takes its own track; chords",
-	"  overflow to free tracks, creating new tracks as needed.",
+	"  Armed (F5) + playing: note-on/off record at the playhead and the",
+	"  view follows it. Not armed: notes land at the cursor like keyboard",
+	"  entry (no playhead follow). Each held note takes its own track;",
+	"  chords overflow to free tracks, creating new tracks as needed.",
 }
 
 func (a *App) drawHelp(h, w int) {

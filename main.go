@@ -148,8 +148,8 @@ func run() error {
 
 	mid := newMidiEngine()
 	// Restore the patchbay routing from the previous session, if present.
-	if len(cfg.Patch) > 0 || len(cfg.Filters) > 0 {
-		mid.applyPatch(cfg.Patch, cfg.Filters)
+	if len(cfg.Patch) > 0 || len(cfg.Filters) > 0 || len(cfg.ClockOff) > 0 {
+		mid.applyPatch(cfg.Patch, cfg.Filters, cfg.ClockOff)
 	}
 
 	player := newPlayer(song, mid)
@@ -288,7 +288,7 @@ func (a *App) saveRecovery() {
 
 // saveAppConfig persists the current preferences.
 func saveAppConfig(a *App) {
-	routes, filters := a.midi.exportPatch()
+	routes, filters, clockOff := a.midi.exportPatch()
 	cfg := Config{
 		LowerH:   a.ed.lowerH,
 		LastPath: a.ed.projPath,
@@ -296,6 +296,7 @@ func saveAppConfig(a *App) {
 		NoThru:   !a.ed.thru,
 		Patch:    routes,
 		Filters:  filters,
+		ClockOff: clockOff,
 	}
 	_ = cfg.save()
 }

@@ -70,8 +70,10 @@ type MidiEngine struct {
 
 	// routes[i][o]: input i routed to output o. i==0 is the Tracker source;
 	// i>=1 maps to ins[i-1]. filter[o][c]: channel c (0..15) passes to output o.
+	// clock[o]: whether MIDI clock / Start / Stop is sent to output o.
 	routes [][]bool
 	filter [][]bool
+	clock  []bool
 
 	// noThru disables forwarding incoming *notes* to outputs (the latch
 	// "record only" / "off" modes). CC/PC and the Tracker source are unaffected.
@@ -183,6 +185,10 @@ func (m *MidiEngine) initMatrixLocked() {
 		for c := range m.filter[o] {
 			m.filter[o][c] = true
 		}
+	}
+	m.clock = make([]bool, no)
+	for o := range m.clock {
+		m.clock[o] = true // clock on by default
 	}
 }
 
@@ -301,6 +307,21 @@ func (m *MidiEngine) setFilterAll(out int, v bool) {
 	}
 }
 
+// clockOn reports whether MIDI clock is sent to output o.
+func (m *MidiEngine) clockOn(out int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return out >= 0 && out < len(m.clock) && m.clock[out]
+}
+
+func (m *MidiEngine) toggleClock(out int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if out >= 0 && out < len(m.clock) {
+		m.clock[out] = !m.clock[out]
+	}
+}
+
 // filterSummary returns a short label like "all", "none" or "5ch".
 func (m *MidiEngine) filterSummary(out int) string {
 	m.mu.Lock()
@@ -367,10 +388,27 @@ func (m *MidiEngine) noteOff(ch, note int) {
 	}
 }
 
+// clockOuts returns the outputs the Tracker source is connected to that also
+// have clock enabled (no channel filter applies to realtime messages).
+func (m *MidiEngine) clockOuts() []int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.routes) == 0 {
+		return nil
+	}
+	var r []int
+	for o := 0; o < len(m.outs); o++ {
+		if m.routes[0][o] && o < len(m.clock) && m.clock[o] {
+			r = append(r, o)
+		}
+	}
+	return r
+}
+
 // trackerRealtime sends a 1-byte realtime message (clock/start/stop) to every
-// output the Tracker source is connected to (no channel filter).
+// clock-enabled output the Tracker source is connected to.
 func (m *MidiEngine) trackerRealtime(status int) {
-	for _, o := range m.trackerOuts(-1) {
+	for _, o := range m.clockOuts() {
 		m.sendTo(o, status, 0, 0)
 	}
 }
@@ -520,7 +558,7 @@ func (m *MidiEngine) rescan() bool {
 	}
 
 	// Preserve the live patch (including unsaved edits) across the rebuild.
-	routes, filters := m.exportPatch()
+	routes, filters, clockOff := m.exportPatch()
 
 	// 1. Stop listeners first, without sendMu, so a listener mid-forward can
 	//    finish and exit (otherwise inWG.Wait would deadlock).
@@ -543,7 +581,7 @@ func (m *MidiEngine) rescan() bool {
 	m.sendMu.Unlock()
 
 	// 3. Restore routing by name onto the new device set.
-	m.applyPatch(routes, filters)
+	m.applyPatch(routes, filters, clockOff)
 
 	m.mu.Lock()
 	newIns := deviceNames(m.ins)
@@ -569,9 +607,10 @@ func (m *MidiEngine) close() {
 
 // --- persistence helpers ---
 
-// exportPatch returns the routes (as "input>>output" name pairs) and the
-// per-output channel filters that differ from "all on".
-func (m *MidiEngine) exportPatch() ([]string, map[string][]int) {
+// exportPatch returns the routes (as "input>>output" name pairs), the
+// per-output channel filters that differ from "all on", and the names of
+// outputs with MIDI clock disabled (the non-default state).
+func (m *MidiEngine) exportPatch() ([]string, map[string][]int, []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var routes []string
@@ -598,11 +637,18 @@ func (m *MidiEngine) exportPatch() ([]string, map[string][]int) {
 			filters[m.outs[o].name] = on
 		}
 	}
-	return routes, filters
+	var clockOff []string
+	for o := 0; o < len(m.clock); o++ {
+		if !m.clock[o] { // only persist non-default (disabled) clock
+			clockOff = append(clockOff, m.outs[o].name)
+		}
+	}
+	return routes, filters, clockOff
 }
 
-// applyPatch rebuilds the matrix from saved name pairs and channel filters.
-func (m *MidiEngine) applyPatch(routes []string, filters map[string][]int) {
+// applyPatch rebuilds the matrix from saved name pairs, channel filters, and
+// the set of outputs whose clock is disabled.
+func (m *MidiEngine) applyPatch(routes []string, filters map[string][]int, clockOff []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inIdx := func(name string) int {
@@ -652,6 +698,11 @@ func (m *MidiEngine) applyPatch(routes []string, filters map[string][]int) {
 			if c >= 0 && c < 16 {
 				m.filter[o][c] = true
 			}
+		}
+	}
+	for _, name := range clockOff {
+		if o := outIdx(name); o >= 0 && o < len(m.clock) {
+			m.clock[o] = false
 		}
 	}
 }

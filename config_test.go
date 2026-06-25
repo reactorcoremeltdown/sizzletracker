@@ -33,6 +33,7 @@ func TestConfigRoundTrip(t *testing.T) {
 		NoThru:   true,
 		Patch:    []string{"Tracker>>IAC Bus 1", "Keystation>>IAC Bus 1"},
 		Filters:  map[string][]int{"IAC Bus 1": {0, 1, 2}},
+		ClockOff: []string{"IAC Bus 1"},
 	}
 	if err := c.save(); err != nil {
 		t.Fatalf("save: %v", err)
@@ -46,6 +47,9 @@ func TestConfigRoundTrip(t *testing.T) {
 	}
 	if chans := got.Filters["IAC Bus 1"]; len(chans) != 3 || chans[2] != 2 {
 		t.Errorf("filters round-trip: %v", got.Filters)
+	}
+	if len(got.ClockOff) != 1 || got.ClockOff[0] != "IAC Bus 1" {
+		t.Errorf("clock-off round-trip: %v", got.ClockOff)
 	}
 }
 
