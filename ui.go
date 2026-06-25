@@ -35,6 +35,7 @@ var (
 	styRollOdd  tcell.Style // faint background for odd piano-roll rows
 	styRollBar  tcell.Style // bar gridline in the piano roll
 	styLoopBar  tcell.Style // looped bar number in the ruler
+	styPlayMark tcell.Style // playhead triangle above the roll ruler
 
 	// Settings tab: full-width section banners + a bright text-field panel
 	// for the scrollable hotkey reference.
@@ -62,6 +63,7 @@ func initStyles() {
 	styRollOdd = def.Background(tcell.NewRGBColor(38, 38, 46))
 	styRollBar = def.Foreground(tcell.ColorGray)
 	styLoopBar = def.Foreground(tcell.ColorRed).Bold(true)
+	styPlayMark = def.Foreground(tcell.ColorGreen).Bold(true)
 	stySecProj = def.Background(tcell.ColorNavy).Foreground(tcell.ColorWhite).Bold(true)
 	stySecMidi = def.Background(tcell.ColorPurple).Foreground(tcell.ColorWhite).Bold(true)
 	stySecKeys = def.Background(tcell.ColorTeal).Foreground(tcell.ColorBlack).Bold(true)
@@ -849,8 +851,18 @@ func (a *App) drawPianoRoll(top, height, w int, fr *frame) {
 	if visBeats < 1 {
 		visBeats = 1
 	}
+	// Header rows below the toolbar: a playhead-marker strip (the ▼ above the
+	// bar numbers) and then the bar ruler. When the pane is too short for the
+	// extra strip, fall back to just the ruler so no lane space is lost.
+	rulerY := top + 1
 	laneTop := top + 2
-	laneRows := height - 2
+	headerRows := 2
+	if height >= 3 {
+		rulerY = top + 2
+		laneTop = top + 3
+		headerRows = 3
+	}
+	laneRows := height - headerRows
 	if laneRows < 1 {
 		laneRows = 1
 	}
@@ -873,7 +885,10 @@ func (a *App) drawPianoRoll(top, height, w int, fr *frame) {
 	}
 	a.ed.rollBeatScroll = clampInt(a.ed.rollBeatScroll, 0, max(0, maxRollBeats-visBeats))
 
-	a.drawRollRuler(top+1, gridX, visBeats, fr)
+	if headerRows == 3 {
+		a.drawRollPlayMarker(top+1, gridX, visBeats, fr)
+	}
+	a.drawRollRuler(rulerY, gridX, visBeats, fr)
 
 	bpb := fr.bpbar
 	r0, b0, r1, b1 := a.ed.rollSelRect()
@@ -933,6 +948,19 @@ func (a *App) drawPianoRoll(top, height, w int, fr *frame) {
 			a.put(y, x, ch, sty)
 			a.ed.addRegion(Region{x: x, y: y, w: 1, h: 1, action: ActRollCell, data1: row, data2: beat})
 		}
+	}
+}
+
+// drawRollPlayMarker draws a downward-pointing triangle on the strip above the
+// bar ruler, at the playhead's beat column, marking the play position on the
+// timeline (in addition to the in-lane playhead highlight).
+func (a *App) drawRollPlayMarker(y, gridX, visBeats int, fr *frame) {
+	if !fr.playing {
+		return
+	}
+	c := fr.playBeat - a.ed.rollBeatScroll
+	if c >= 0 && c < visBeats {
+		a.put(y, gridX+c, "▼", styPlayMark)
 	}
 }
 

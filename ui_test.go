@@ -16,6 +16,69 @@ func rowAllBg(cells []tcell.SimCell, w, y int, bg tcell.Color) bool {
 	return true
 }
 
+func TestRollPlayMarker(t *testing.T) {
+	initStyles()
+	sc := tcell.NewSimulationScreen("UTF-8")
+	if err := sc.Init(); err != nil {
+		t.Fatalf("sim init: %v", err)
+	}
+	const w, h = 60, 20
+	sc.SetSize(w, h)
+	a := &App{screen: sc, ed: newEditor()}
+
+	newFrame := func(playing bool, playBeat int) *frame {
+		return &frame{
+			bpbar:      4,
+			numBlocks:  1,
+			blockNames: []string{"A"},
+			blockBeats: []int{4},
+			roll:       [][]bool{make([]bool, 64)},
+			playing:    playing,
+			playBeat:   playBeat,
+		}
+	}
+
+	const top, height = 1, 12
+	gut := rollGutterWidth([]string{"A"})
+	markerY := top + 1
+	rune2D := func() ([]tcell.SimCell, int) {
+		cells, gw, _ := sc.GetContents()
+		return cells, gw
+	}
+
+	// While playing: ▼ sits on the strip above the ruler at the playhead beat.
+	sc.Clear()
+	a.drawPianoRoll(top, height, w, newFrame(true, 5))
+	sc.Show()
+	cells, gw := rune2D()
+	x := gut + (5 - a.ed.rollBeatScroll)
+	if r := cells[markerY*gw+x].Runes; len(r) == 0 || r[0] != '▼' {
+		t.Errorf("playing: expected ▼ at (%d,%d), got %q", x, markerY, string(r))
+	}
+
+	// The bar ruler is pushed one row down (now below the marker strip).
+	label := ""
+	for cx := 0; cx < 3; cx++ {
+		if r := cells[(top+2)*gw+cx].Runes; len(r) > 0 {
+			label += string(r[0])
+		}
+	}
+	if label != "bar" {
+		t.Errorf("ruler label not on row %d, got %q", top+2, label)
+	}
+
+	// While stopped: no triangle on the strip.
+	sc.Clear()
+	a.drawPianoRoll(top, height, w, newFrame(false, 5))
+	sc.Show()
+	cells, gw = rune2D()
+	for cx := 0; cx < w; cx++ {
+		if r := cells[markerY*gw+cx].Runes; len(r) > 0 && r[0] == '▼' {
+			t.Errorf("stopped: unexpected ▼ at (%d,%d)", cx, markerY)
+		}
+	}
+}
+
 func TestRenameBlockFlow(t *testing.T) {
 	a := &App{song: newSong(), ed: newEditor()}
 
