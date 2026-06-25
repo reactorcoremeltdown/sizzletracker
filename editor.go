@@ -29,6 +29,7 @@ const (
 	DlgOpen
 	DlgExport
 	DlgSaveDir // edit the default save folder
+	DlgRename  // rename a block (renameTarget holds the block index)
 )
 
 // Column indices within a track.
@@ -69,12 +70,13 @@ const (
 	ActChanNone    // data1=output (all channels off)
 	ActTrackerCell // data1=track, data2=tick, data3=column
 	ActAddTrack
-	ActDelTrack  // data1=track index to delete
-	ActBlockPrev // edit previous block
-	ActBlockNext // edit next block
-	ActLenHalf   // halve block length
-	ActLenDouble // double block length
-	ActLenField  // edit block length text field
+	ActDelTrack   // data1=track index to delete
+	ActBlockTitle // tracker block name (click=focus, double-click=rename)
+	ActBlockPrev  // edit previous block
+	ActBlockNext  // edit next block
+	ActLenHalf    // halve block length
+	ActLenDouble  // double block length
+	ActLenField   // edit block length text field
 	// Piano-roll toolbar + grid.
 	ActBlockAdd    // add a block below the selected one
 	ActBlockRemove // remove the selected block
@@ -158,10 +160,11 @@ type Editor struct {
 	fileX    int // x of the File menu (for dropdown alignment)
 
 	// Modal file dialog.
-	showDialog bool
-	dlgAction  DialogAction
-	dlgPrompt  string
-	dlgBuf     string
+	showDialog   bool
+	dlgAction    DialogAction
+	dlgPrompt    string
+	dlgBuf       string
+	renameTarget int // block index targeted by a DlgRename dialog
 
 	// Current project file path (for plain "Save").
 	projPath string

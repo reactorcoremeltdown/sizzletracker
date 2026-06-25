@@ -16,6 +16,45 @@ func rowAllBg(cells []tcell.SimCell, w, y int, bg tcell.Color) bool {
 	return true
 }
 
+func TestRenameBlockFlow(t *testing.T) {
+	a := &App{song: newSong(), ed: newEditor()}
+
+	a.startRenameBlock(0)
+	if a.ed.focus != FocusDialog || a.ed.dlgAction != DlgRename {
+		t.Fatalf("dialog not opened: focus=%v action=%v", a.ed.focus, a.ed.dlgAction)
+	}
+	a.ed.dlgBuf = "Intro Groove"
+	a.executeDialog()
+	if got := a.song.Blocks[0].Name; got != "Intro Groove" {
+		t.Errorf("after rename, block 0 name = %q, want %q", got, "Intro Groove")
+	}
+
+	// An empty name reverts to the default letter.
+	a.startRenameBlock(0)
+	a.ed.dlgBuf = "   "
+	a.executeDialog()
+	if got := a.song.Blocks[0].Name; got != blockName(0) {
+		t.Errorf("after empty rename, block 0 name = %q, want %q", got, blockName(0))
+	}
+}
+
+func TestRollGutterWidth(t *testing.T) {
+	for _, c := range []struct {
+		names []string
+		want  int
+	}{
+		{[]string{"A", "B"}, 6},                         // short names -> compact minimum
+		{[]string{"A", "Chorus"}, 7},                    // longest 6 -> 7
+		{[]string{"sixteen-char-nam"}, 17},              // 16 chars -> max gutter
+		{[]string{"way too long to ever fit here"}, 17}, // clamped to max
+		{nil, 6},
+	} {
+		if got := rollGutterWidth(c.names); got != c.want {
+			t.Errorf("rollGutterWidth(%v) = %d, want %d", c.names, got, c.want)
+		}
+	}
+}
+
 func TestDrawSettingsSections(t *testing.T) {
 	initStyles()
 	sc := tcell.NewSimulationScreen("UTF-8")

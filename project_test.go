@@ -58,6 +58,40 @@ func TestProjectRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBlockNameWithSpacesRoundTrip(t *testing.T) {
+	s := newSong()
+	s.Blocks[0].Name = "Verse 1 Riff" // contains spaces
+	s.Blocks[1].Name = "Chorus"       // single token (old-style)
+	text := encodeProject(s)
+	got, err := decodeProject(strings.NewReader(text))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Blocks[0].Name != "Verse 1 Riff" {
+		t.Errorf("block 0 name = %q, want %q", got.Blocks[0].Name, "Verse 1 Riff")
+	}
+	if got.Blocks[1].Name != "Chorus" {
+		t.Errorf("block 1 name = %q, want %q", got.Blocks[1].Name, "Chorus")
+	}
+}
+
+func TestSanitizeBlockName(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"  Lead  ", "Lead"},
+		{"a really long block name here", "a really long bl"}, // capped at 16
+		{"tab\tand\nnl", "tabandnl"},                          // control chars dropped
+		{"", ""},
+	} {
+		got := sanitizeBlockName(c.in)
+		if got != c.want {
+			t.Errorf("sanitizeBlockName(%q) = %q, want %q", c.in, got, c.want)
+		}
+		if len(got) > maxBlockNameLen {
+			t.Errorf("sanitizeBlockName(%q) exceeds %d", c.in, maxBlockNameLen)
+		}
+	}
+}
+
 func TestNoteTokenRoundTrip(t *testing.T) {
 	for n := 0; n <= 127; n++ {
 		if got := parseNote(noteToken(n)); got != n {

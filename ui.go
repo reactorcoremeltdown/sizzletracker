@@ -778,6 +778,7 @@ func (a *App) drawTrackerControls(y, w int, fr *frame) {
 	x := 0
 	title := fmt.Sprintf("BLK %s [%d/%d]", fr.edit.name, a.ed.editBlock+1, fr.numBlocks)
 	a.put(y, x, title, styAccent)
+	a.ed.addRegion(Region{x: x, y: y, w: cellWidth(title), h: 1, action: ActBlockTitle})
 	x += cellWidth(title) + 1
 
 	x = a.button(y, x, "<", false, ActBlockPrev)
@@ -817,13 +818,27 @@ func (a *App) drawTrackerControls(y, w int, fr *frame) {
 // means the block plays that beat. Blocks interlace vertically (alternating
 // row tint) and bars interlace horizontally (a gridline every beatsPerBar).
 
+// rollGutterWidth sizes the piano-roll label column to fit the longest block
+// name, clamped between a compact minimum and maxBlockNameLen+1.
+func rollGutterWidth(names []string) int {
+	longest := 0
+	for _, n := range names {
+		if l := cellWidth(n); l > longest {
+			longest = l
+		}
+	}
+	return clampInt(longest+1, 6, maxBlockNameLen+1)
+}
+
 func (a *App) drawPianoRoll(top, height, w int, fr *frame) {
 	if height < 2 {
 		return
 	}
 	a.drawRollToolbar(top, w, fr)
 
-	const gut = 6
+	// The label gutter grows to fit the longest block name (so renamed blocks
+	// stay readable) but stays modest so short names don't waste grid space.
+	gut := rollGutterWidth(fr.blockNames)
 	gridX := gut
 	visBeats := w - gridX
 	if visBeats < 1 {
@@ -1054,6 +1069,7 @@ var helpLines = []string{
 	"  Space play/stop   Tab switch pane   F1 help   F2/F3 focus",
 	"  F4 cycle views   F5 record   Ctrl+T thru   F6 loop   F7 follow",
 	"  F8 panic   F9 BPM   F10 quit",
+	"  Ctrl+R rename block (max 16; or double-click a block name)",
 	"  MIDI latch = Record (F5) + Thru (Ctrl+T): Playback/Record/Both/Off",
 	"",
 	"# Files (File menu, or keys)",

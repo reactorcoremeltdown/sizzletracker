@@ -109,6 +109,9 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 		case tcell.KeyCtrlE:
 			a.openDialog(DlgExport, "Export MIDI to:", a.defaultMidiName())
 			return true
+		case tcell.KeyCtrlR:
+			a.startRenameBlock(a.ed.editBlock)
+			return true
 		}
 		if k == tcell.KeyRune && r == ' ' {
 			if a.player.isPlaying() {
@@ -273,11 +276,30 @@ func (a *App) handleDialogKey(k tcell.Key, r rune) {
 			a.ed.dlgBuf = a.ed.dlgBuf[:len(a.ed.dlgBuf)-1]
 		}
 	case tcell.KeyRune:
-		// Accept ordinary printable path characters.
-		if r >= 0x20 && r < 0x7f && len(a.ed.dlgBuf) < 200 {
+		// Accept ordinary printable characters. Block names are bounded to
+		// maxBlockNameLen; paths get a generous cap.
+		limit := 200
+		if a.ed.dlgAction == DlgRename {
+			limit = maxBlockNameLen
+		}
+		if r >= 0x20 && r < 0x7f && len(a.ed.dlgBuf) < limit {
 			a.ed.dlgBuf += string(r)
 		}
 	}
+}
+
+// startRenameBlock opens the rename dialog for block i, prefilled with its
+// current name.
+func (a *App) startRenameBlock(i int) {
+	a.song.mu.Lock()
+	if i < 0 || i >= len(a.song.Blocks) {
+		a.song.mu.Unlock()
+		return
+	}
+	name := a.song.Blocks[i].Name
+	a.song.mu.Unlock()
+	a.ed.renameTarget = i
+	a.openDialog(DlgRename, "Rename block (max 16):", name)
 }
 
 func (a *App) openDialog(action DialogAction, prompt, initial string) {
@@ -339,6 +361,20 @@ func (a *App) executeDialog() {
 		} else {
 			a.ed.status = "Default save folder: " + path
 		}
+		return
+	}
+	if a.ed.dlgAction == DlgRename {
+		name := sanitizeBlockName(a.ed.dlgBuf)
+		a.song.mu.Lock()
+		i := a.ed.renameTarget
+		if i >= 0 && i < len(a.song.Blocks) {
+			if name == "" {
+				name = blockName(i) // empty reverts to the default letter
+			}
+			a.song.Blocks[i].Name = name
+		}
+		a.song.mu.Unlock()
+		a.ed.status = "Renamed block to " + name
 		return
 	}
 	if path == "" {
@@ -1178,12 +1214,26 @@ func (a *App) handleMouse(ev *tcell.EventMouse) {
 	case ActSeparator:
 		a.sepDrag = true
 		a.setLowerFromY(y)
+	case ActBlockTitle:
+		now := time.Now()
+		dbl := now.Sub(a.lastClickAt) < dblClickWindow && a.lastClickX == x && a.lastClickY == y
+		a.lastClickAt, a.lastClickX, a.lastClickY = now, x, y
+		a.ed.focus = FocusTracker
+		if dbl {
+			a.startRenameBlock(a.ed.editBlock)
+		}
 	case ActRollLabel:
+		now := time.Now()
+		dbl := now.Sub(a.lastClickAt) < dblClickWindow && a.lastClickX == x && a.lastClickY == y
+		a.lastClickAt, a.lastClickX, a.lastClickY = now, x, y
 		a.ed.focus = FocusArrange
 		a.ed.selActive = false
 		a.ed.editBlock = reg.data1
 		a.player.setEditBlock(reg.data1)
 		a.resetCursorToBlock()
+		if dbl {
+			a.startRenameBlock(reg.data1)
+		}
 	case ActRollCell:
 		a.ed.focus = FocusArrange
 		a.ed.editBlock = reg.data1

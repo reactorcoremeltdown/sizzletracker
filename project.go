@@ -184,11 +184,16 @@ func decodeProject(r io.Reader) (*Song, error) {
 			if len(f) < 3 {
 				continue
 			}
-			length := atoiDef(f[2], 16)
+			// Format: block <name...> <length> <numTracks>. The name may
+			// contain spaces, so the two trailing integers are read from the
+			// right and the remaining middle tokens form the name.
+			n := len(f)
+			length := atoiDef(f[n-2], 16)
 			if length < 1 {
 				length = 1
 			}
-			b := &Block{Name: f[1], Length: length}
+			name := strings.Join(f[1:n-2], " ")
+			b := &Block{Name: name, Length: length}
 			s.Blocks = append(s.Blocks, b)
 			s.Roll = append(s.Roll, newRollRow())
 			curBlock, curIdx, curTrack = b, len(s.Blocks)-1, nil

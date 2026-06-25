@@ -2,8 +2,30 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
+
+// maxBlockNameLen caps a block's display name length (in characters).
+const maxBlockNameLen = 16
+
+// sanitizeBlockName trims a user-entered block name to printable ASCII and at
+// most maxBlockNameLen characters.
+func sanitizeBlockName(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		if r < 0x20 || r >= 0x7f {
+			continue
+		}
+		b.WriteRune(r)
+		if n++; n >= maxBlockNameLen {
+			break
+		}
+	}
+	return b.String()
+}
 
 // Step value sentinels for the Note field.
 const (
